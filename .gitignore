@@ -1,0 +1,20 @@
+# Environment secrets
+.env
+
+# Database and file uploads
+database/database.sqlite3
+database/database.sqlite3-wal
+database/database.sqlite3-shm
+database/database.json
+database/database.json.migrated
+database/mods_storage/
+
+# Python cache & virtual environment
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Hi vibecoders :3
+CLAUDE.md
+AGENTS.md
