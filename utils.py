@@ -1,5 +1,5 @@
 """
-Misc helpers: simple semver-ish comparison, mod-id / version validation,
+Misc helpers: semver-compatible comparison, mod-id / version validation,
 and downloading + parsing .geode files
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Optional
 
 import httpx
 from fastapi import HTTPException
+from semantic_version import Version, Value
 
 from config import settings
 
@@ -21,39 +22,42 @@ MOD_ID_RE = re.compile(r"^[a-z0-9_\-]+\.[a-z0-9_\-]+$")
 
 # Version comparison
 
-def _version_key(version: str) -> tuple:
-    """Turn 'v1.2.3-beta.1' into a comparable tuple.
+def _parse_version(version: str) -> Version:
+    """Parse a version using the same SemVer rules as the Rust server.
 
-    This is a pragmatic subset of semver: numeric release components compare
-    numerically, and any prerelease suffix (after '-') sorts before the
-    equivalent release version.
+    The upstream server uses semver::Version and strips a leading `v` when
+    accepting mod.json versions. Stored/query versions therefore compare as
+    normal SemVer rather than using the old numeric-tuple approximation.
     """
-    v = version.strip()
-    if v.startswith("v"):
-        v = v[1:]
-    release, _, prerelease = v.partition("-")
-    parts = []
-    for chunk in release.split("."):
-        parts.append(int(chunk) if chunk.isdigit() else 0)
-    has_prerelease = 1 if prerelease else 0
-    prerelease_parts = tuple(
-        int(p) if p.isdigit() else p for p in prerelease.split(".")
-    ) if prerelease else ()
-    return (tuple(parts), 0 if has_prerelease else 1, prerelease_parts)
+    value = version.strip()
+    if value.startswith(("v", "V")):
+        value = value[1:]
+    try:
+        return Version(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid semantic version: {version}") from exc
+
+
+def _version_key(version: str):
+    """Return a sortable SemVer object."""
+    return _parse_version(version)
 
 
 def compare_versions(a: str, b: str) -> int:
-    """Return -1, 0, or 1 comparing version strings a and b."""
-    ka, kb = _version_key(a), _version_key(b)
-    if ka < kb:
+    """Return -1, 0, or 1 comparing versions using SemVer precedence."""
+    va, vb = _parse_version(a), _parse_version(b)
+    if va < vb:
         return -1
-    if ka > kb:
+    if va > vb:
         return 1
     return 0
 
 
 def version_matches(version: str, target: str, op: str) -> bool:
-    cmp = compare_versions(version, target)
+    try:
+        cmp = compare_versions(version, target)
+    except ValueError:
+        return False
     return {
         "=": cmp == 0,
         ">": cmp > 0,
@@ -88,18 +92,7 @@ async def download_bytes(url: str, max_size: int) -> bytes:
 
 
 def parse_geode_package(file_bytes: bytes) -> dict:
-    """Parse a .geode package.
-
-    Also pulls out, all from the package root (case-insensitive, not
-    searched in subdirectories):
-      - `about.md`, the mod's long-form Markdown description. Falls back to
-        `README.md` if `about.md` is missing (matching Geode CLI >=3.5.0).
-      - `changelog.md`, the mod's changelog.
-      - `logo.png`, the mod's icon.
-
-    Returns the mod.json contents plus `_hash` (sha256 of the whole
-    package), `_size`, `_about`, `_changelog`, and `_logo_bytes`.
-    """
+    """Parse a .geode package and extract its index metadata."""
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             names = zf.namelist()
@@ -145,6 +138,11 @@ def parse_geode_package(file_bytes: bytes) -> dict:
             detail="mod.json 'id' must look like '<developer>.<mod-name>', e.g. 'geode.node-ids'",
         )
 
+    try:
+        _parse_version(str(manifest["version"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     manifest["_hash"] = hashlib.sha256(file_bytes).hexdigest()
     manifest["_size"] = len(file_bytes)
     manifest["_about"] = about_text
@@ -154,8 +152,7 @@ def parse_geode_package(file_bytes: bytes) -> dict:
 
 
 async def fetch_and_parse_geode_file(download_link: str) -> dict:
-    file_bytes = await download_bytes(download_link, settings.MAX_GEODE_FILE_SIZE_BYTES)
-    return parse_geode_package(file_bytes)
+    return parse_geode_package(await download_bytes(download_link, settings.MAX_GEODE_FILE_SIZE_BYTES))
 
 _DEPENDENCY_IMPORTANCE_VALUES = {"suggested", "recommended", "required"}
 _INCOMPATIBILITY_IMPORTANCE_VALUES = {"breaking", "conflicting", "superseded"}
@@ -195,9 +192,6 @@ def _parse_dep_like(
 
 
 def parse_dependencies(raw) -> list[dict]:
-    """mod.json dependencies object -> array of ResponseDependency dicts.
-    Required by default per the docs ("If this is not specified, the
-    dependency is marked as required")."""
     return _parse_dep_like(
         raw,
         flag_key="required",
@@ -208,9 +202,6 @@ def parse_dependencies(raw) -> list[dict]:
 
 
 def parse_incompatibilities(raw) -> list[dict]:
-    """mod.json incompatibilities object -> array of ResponseIncompatibility
-    dicts. Defaults to "breaking" when unspecified, mirroring dependencies
-    defaulting to "required" when unspecified."""
     return _parse_dep_like(
         raw,
         flag_key="breaking",
@@ -219,8 +210,6 @@ def parse_incompatibilities(raw) -> list[dict]:
         default_importance_false="conflicting",
     )
 
-
-# Misc
 
 def parse_gd_query(value: Optional[str]) -> Optional[str]:
     if value is None:
