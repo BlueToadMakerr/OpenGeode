@@ -1,22 +1,15 @@
 """
 Pydantic models for the Geode Index API.
 
-This file mirrors the schemas declared in openapi.json. It's kept as a single
-module (like the original models.py) rather than split into a package, since
-that's how the project started -- if it grows unwieldy it's a good candidate
-to split into models/ later.
+This file mirrors the public API schemas used by the upstream Geode Index.
 """
-# TODO: Fix FastAPI not showing correct output on bad requests
-
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-
-# Enums
 
 class ModVersionStatusEnum(str, Enum):
     pending = "pending"
@@ -72,14 +65,11 @@ class VerPlatform(str, Enum):
     win = "win"
 
 
-# Known Geode Data (GD) versions the index accepted.
 KNOWN_GD_VERSIONS = [
     "*", "2.113", "2.200", "2.204", "2.205", "2.206", "2.207", "2.2071",
     "2.2072", "2.2073", "2.2074", "2.208", "2.2081", "2.2082",
 ]
 
-
-# Shared / misc
 
 class StandardResponse(BaseModel):
     error: Optional[str] = None
@@ -97,7 +87,6 @@ class PaginatedData(BaseModel):
 
 
 # Auth
-
 class CallbackParams(BaseModel):
     code: str
     state: str
@@ -122,7 +111,6 @@ class AuthTokens(BaseModel):
 
 
 # Developers
-
 class Developer(BaseModel):
     id: int
     username: str
@@ -155,7 +143,6 @@ class PaginatedData_Developer(BaseModel):
 
 
 # GD versions / platforms
-
 class DetailedGDVersion(BaseModel):
     win: Optional[str] = None
     ios: Optional[str] = None
@@ -179,7 +166,6 @@ class GDVersionAlias(BaseModel):
 
 
 # Tags
-
 class Tag(BaseModel):
     id: int
     name: str
@@ -188,7 +174,6 @@ class Tag(BaseModel):
 
 
 # Loader
-
 class LoaderDownload(BaseModel):
     url: str
     hash: str
@@ -226,7 +211,6 @@ class PaginatedData_LoaderVersion(BaseModel):
 
 
 # Dependencies / incompatibilities / replacement
-
 class ResponseDependency(BaseModel):
     mod_id: str
     version: str
@@ -259,7 +243,6 @@ class ModUpdate(BaseModel):
 
 
 # Mods / mod versions
-
 class ModLinks(BaseModel):
     homepage: Optional[str] = None
     community: Optional[str] = None
@@ -306,7 +289,7 @@ class Mod(BaseModel):
 
 
 class CreateQueryParams(BaseModel):
-    download_link: str
+    download_link: str = Field(max_length=1024)
 
 
 class UpdateModPayload(BaseModel):
@@ -327,7 +310,7 @@ class SimpleDevModVersion(BaseModel):
     version: str
     download_count: int
     validated: bool
-    info: str = ""
+    info: Optional[str] = None
     status: ModVersionStatusEnum
 
 
@@ -345,7 +328,6 @@ class PaginatedData_Mod(BaseModel):
 
 
 # Deprecations
-
 class Deprecation(BaseModel):
     id: int
     mod_id: str
@@ -364,7 +346,6 @@ class UpdateDeprecationData(BaseModel):
 
 
 # Submissions / comments / attachments
-
 class ModVersionSubmission(BaseModel):
     mod_version_id: int
     lock: ModVersionSubmissionLock
@@ -412,7 +393,6 @@ class UploadAttachmentsForm(BaseModel):
 
 
 # Stats
-
 class Stats(BaseModel):
     total_mod_count: int
     total_mod_downloads: int

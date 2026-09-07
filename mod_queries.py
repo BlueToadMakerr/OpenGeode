@@ -9,20 +9,24 @@ from database import storage
 from models import ModVersionStatusEnum, VerPlatform
 from utils import compare_versions, version_matches
 
-_ANDROID_PLATFORMS = {VerPlatform.android, VerPlatform.android32, VerPlatform.android64}
-
-_GD_FIELD_BY_PLATFORM = {
-    VerPlatform.win: "win",
-    VerPlatform.ios: "ios",
-    VerPlatform.mac: "mac-intel",
-    VerPlatform.mac_intel: "mac-intel",
-    VerPlatform.mac_arm: "mac-arm",
+_PLATFORM_FIELDS = {
+    VerPlatform.win: ("win",),
+    VerPlatform.ios: ("ios",),
+    VerPlatform.mac: ("mac-intel", "mac-arm"),
+    VerPlatform.mac_intel: ("mac-intel",),
+    VerPlatform.mac_arm: ("mac-arm",),
+    VerPlatform.android: ("android32", "android64"),
+    VerPlatform.android32: ("android32",),
+    VerPlatform.android64: ("android64",),
 }
 
 _COMPARE_RE = re.compile(r"^(>=|<=|>|<|=)?\s*(.+)$")
 
-# Rejected mods are not viewable for denied users (non admins)
-PUBLICLY_VISIBLE_STATUSES = [s.value for s in ModVersionStatusEnum if s != ModVersionStatusEnum.rejected]
+PUBLICLY_VISIBLE_STATUSES = [
+    ModVersionStatusEnum.accepted.value,
+    ModVersionStatusEnum.pending.value,
+    ModVersionStatusEnum.unlisted.value,
+]
 
 
 def resolve_visible_statuses(
@@ -39,15 +43,30 @@ def resolve_visible_statuses(
 def parse_platforms(raw: Optional[str]) -> Optional[list[VerPlatform]]:
     if not raw:
         return None
-    out = []
+    out: list[VerPlatform] = []
     for chunk in raw.split(","):
-        chunk = chunk.strip()
+        chunk = chunk.strip().lower()
         if not chunk:
             continue
+        # Match the upstream aliases exactly, including windows/macos.
+        if chunk in ("windows",):
+            chunk = "win"
+        elif chunk in ("macos",):
+            chunk = "mac"
         try:
-            out.append(VerPlatform(chunk))
+            platform = VerPlatform(chunk)
         except ValueError:
-            continue
+            raise HTTPException(status_code=400, detail=f"Invalid platform {chunk}")
+
+        # The upstream server expands aggregate platform names before
+        # querying the version rows.
+        if platform == VerPlatform.android:
+            out.extend((VerPlatform.android32, VerPlatform.android64))
+        elif platform == VerPlatform.mac:
+            out.extend((VerPlatform.mac_arm, VerPlatform.mac_intel))
+        else:
+            out.append(platform)
+
     return out or None
 
 
@@ -62,33 +81,37 @@ def parse_compare(raw: Optional[str]) -> Optional[tuple[str, str]]:
         return None
     match = _COMPARE_RE.match(raw.strip())
     if not match:
-        return None
+        raise HTTPException(status_code=400, detail=f"Bad compare string {raw}")
     op, ver = match.groups()
-    return (op or "=", ver)
+    if not ver.strip():
+        raise HTTPException(status_code=400, detail=f"Bad compare string {raw}")
+    try:
+        compare_versions("0.0.0", ver.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Bad compare string {raw}")
+    return (op or "=", ver.strip())
 
 
 def version_matches_gd(v: dict, gd: Optional[str]) -> bool:
     if not gd or gd == "*":
         return True
-    return gd in [val for val in v["gd"].values() if val]
+    return gd in [val for val in v.get("gd", {}).values() if val]
 
 
 def version_matches_platforms(v: dict, platforms: Optional[list[VerPlatform]]) -> bool:
     if not platforms:
         return True
-    for platform in platforms:
-        if platform in _ANDROID_PLATFORMS:
-            return True
-        gd_field = _GD_FIELD_BY_PLATFORM.get(platform)
-        if gd_field and v["gd"].get(gd_field):
-            return True
-    return False
+    gd = v.get("gd", {})
+    return any(gd.get(field) for platform in platforms for field in _PLATFORM_FIELDS.get(platform, ()))
 
 
 def version_matches_geode(v: dict, geode: Optional[str]) -> bool:
     if not geode:
         return True
-    return compare_versions(v["geode"], geode) <= 0
+    try:
+        return compare_versions(v["geode"], geode) <= 0
+    except ValueError:
+        return False
 
 
 def versions_for_mod(mod_id: str, statuses: Optional[list[str]] = None) -> list[dict]:
@@ -120,15 +143,17 @@ def select_best_version(
 
 def compare_versions_key(version: str):
     from utils import _version_key
-
     return _version_key(version)
 
-# TODO: Allow changing if valid tags are required in opengeode.json
+
 def filter_submittable_tags(tag_names) -> list[str]:
     if not tag_names:
         return []
-    valid_by_lower = {t["name"].lower(): t["name"] for t in storage.all_rows("tags") if not t["is_readonly"]}
-
+    valid_by_lower = {
+        t["name"].lower(): t["name"]
+        for t in storage.all_rows("tags")
+        if not t["is_readonly"]
+    }
     result = []
     for name in tag_names:
         if not isinstance(name, str):

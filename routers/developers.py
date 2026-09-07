@@ -16,13 +16,10 @@ from models import (
     UploadProfilePayload,
 )
 from pagination import page_params, paginate
-from serializers import developer_public as _developer_public
+from serializers import developer_public as _developer_public, is_mod_owner
 
 router = APIRouter(tags=["developers"])
 
-
-# NOTE: order matters -- /v1/me and /v1/me/mods must be declared before the
-# /v1/developers/{id} routes to avoid "me" being parsed as an id.
 
 @router.get("/v1/me", summary="Get the current developer's profile")
 def get_me(developer: Developer = Depends(security.get_current_developer)):
@@ -34,43 +31,62 @@ def update_me(
     body: UploadProfilePayload,
     developer: Developer = Depends(security.get_current_developer),
 ):
-    if not body.display_name or not body.display_name.strip():
-        raise HTTPException(status_code=400, detail="display_name cannot be empty")
+    # Match the upstream server: display names are ASCII alphanumeric and
+    # must be 2..64 characters long.
+    if not body.display_name.isascii() or not body.display_name.isalnum():
+        raise HTTPException(
+            status_code=400,
+            detail="Display name must contain only ASCII alphanumeric characters",
+        )
+    if len(body.display_name) < 2 or len(body.display_name) > 64:
+        raise HTTPException(
+            status_code=400,
+            detail="Display name must be between 2 and 64 characters",
+        )
 
     updated = storage.update_where(
-        "developers", {"id": developer.id}, {"display_name": body.display_name.strip()}
+        "developers", {"id": developer.id}, {"display_name": body.display_name}
     )
     return {"error": "", "payload": _developer_public(updated)}
 
 
 @router.get("/v1/me/mods", summary="Get all mods owned by the current developer")
 def get_my_mods(
-    status: Optional[ModVersionStatusEnum] = Query(default=None),
+    status: ModVersionStatusEnum = Query(default=ModVersionStatusEnum.accepted),
     only_owner: bool = Query(default=False),
     developer: Developer = Depends(security.get_current_developer),
 ):
     mods = storage.find_all(
         "mods",
         lambda m: any(
-            d["developer_id"] == developer.id and (not only_owner or d["is_owner"])
+            d["developer_id"] == developer.id
+            and (not only_owner or d["is_owner"])
             for d in m["developers"]
         ),
     )
 
     result = []
     for mod in mods:
-        versions = storage.find_all("mod_versions", lambda v, mid=mod["id"]: v["mod_id"] == mid)
-        target_status = status.value if status is not None else ModVersionStatusEnum.accepted.value
-        versions = [v for v in versions if v["status"] == target_status]
+        versions = storage.find_all(
+            "mod_versions", lambda v, mid=mod["id"]: v["mod_id"] == mid
+        )
+        versions = [v for v in versions if v["status"] == status.value]
         versions.sort(key=lambda v: v.get("created_at") or "", reverse=True)
 
-        dev_rows = [storage.find_one("developers", id=d["developer_id"]) for d in mod["developers"]]
+        dev_rows = [
+            storage.find_one("developers", id=d["developer_id"])
+            for d in mod["developers"]
+        ]
         mod_developers = [
             ModDeveloper(
                 id=dr["id"],
                 username=dr["username"],
                 display_name=dr["display_name"],
-                is_owner=next(d["is_owner"] for d in mod["developers"] if d["developer_id"] == dr["id"]),
+                is_owner=next(
+                    d["is_owner"]
+                    for d in mod["developers"]
+                    if d["developer_id"] == dr["id"]
+                ),
             )
             for dr in dev_rows
             if dr
@@ -87,7 +103,7 @@ def get_my_mods(
                         version=v["version"],
                         download_count=v["download_count"],
                         validated=v["status"] == ModVersionStatusEnum.accepted.value,
-                        info=v.get("info") or "",
+                        info=v.get("info"),
                         status=v["status"],
                     )
                     for v in versions
@@ -120,7 +136,10 @@ def list_developers(
     rows = storage.all_rows("developers")
     if query:
         q = query.lower()
-        rows = [r for r in rows if q in r["username"].lower() or q in r["display_name"].lower()]
+        rows = [
+            r for r in rows
+            if q in r["username"].lower() or q in r["display_name"].lower()
+        ]
     rows.sort(key=lambda r: r["id"])
 
     result = paginate(rows, page, per_page)
@@ -136,10 +155,7 @@ def get_developer(id: int):
     return {"error": "", "payload": _developer_public(row)}
 
 
-@router.put(
-    "/v1/developers/{id}",
-    summary="Update a developer's admin/verified status (admin only)",
-)
+@router.put("/v1/developers/{id}", summary="Update a developer's admin/verified status (admin only)")
 def update_developer(
     id: int,
     body: DeveloperUpdatePayload,
@@ -159,9 +175,3 @@ def update_developer(
 
     updated = storage.update_where("developers", {"id": id}, patch)
     return {"error": "", "payload": _developer_public(updated)}
-
-
-# NOTE: POST /v1/mods/{id}/developers and DELETE /v1/mods/{id}/developers/{username}
-# are tagged "developers" in the OpenAPI spec but live in routers/mods.py,
-# since they need the same mod-ownership permission logic as the rest of the
-# mods routes.
