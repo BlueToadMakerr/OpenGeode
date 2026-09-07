@@ -1,0 +1,375 @@
+<style>
+    .tags-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+
+    .tags-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .tag-row {
+        display: grid;
+        grid-template-columns: 1.1fr 1.4fr auto auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.18);
+    }
+
+    .tag-row input[type="text"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.3);
+        color: white;
+    }
+
+    .tag-row input[type="text"]:focus {
+        outline: none;
+        border-color: var(--primary);
+    }
+
+    .tag-readonly {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        white-space: nowrap;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+    }
+
+    .tag-actions {
+        display: flex;
+        gap: 7px;
+    }
+
+    .tag-save-button {
+        background: #10b981;
+    }
+
+    .tag-delete-button {
+        background: #ef4444;
+    }
+
+    .tag-create-card {
+        border-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.05);
+        margin-bottom: 20px;
+    }
+
+    .tag-create-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto auto;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .tag-create-grid input[type="text"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.3);
+        color: white;
+    }
+
+    .tag-create-grid input[type="text"]:focus {
+        outline: none;
+        border-color: #3b82f6;
+    }
+
+    .tag-message {
+        margin: 10px 0;
+        font-size: 0.9rem;
+    }
+
+    .tag-empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 35px 15px;
+    }
+
+    @media (max-width: 800px) {
+        .tag-row,
+        .tag-create-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .tag-actions {
+            justify-content: stretch;
+        }
+
+        .tag-actions button {
+            flex: 1;
+        }
+    }
+</style>
+
+<div class="dashboard-container">
+    <div class="card" style="margin-bottom: 20px; border-color: #10b981; background: rgba(16, 185, 129, 0.05);">
+        <h2 style="margin-top: 0;">🏷 Tag Management</h2>
+        <p style="color: var(--text-muted); margin-bottom: 0;">
+            Manage the tags available to mods. Renaming a tag also updates existing mod tag assignments.
+        </p>
+    </div>
+
+    <div class="card tag-create-card">
+        <h3 style="margin-top: 0;">Create Tag</h3>
+        <div class="tag-create-grid">
+            <input type="text" id="newTagName" placeholder="Internal name (e.g. gameplay)" maxlength="128">
+            <input type="text" id="newTagDisplayName" placeholder="Display name (e.g. Gameplay)" maxlength="128">
+            <label class="tag-readonly">
+                <input type="checkbox" id="newTagReadonly">
+                Read-only
+            </label>
+            <button id="createTagButton" onclick="createOpenGeodeTag()">Create</button>
+        </div>
+        <div id="tagCreateMessage" class="tag-message"></div>
+    </div>
+
+    <div class="card">
+        <div class="tags-toolbar">
+            <div>
+                <h3 style="margin: 0;">Tags</h3>
+                <p id="tagCount" style="color: var(--text-muted); font-size: 0.85rem; margin: 5px 0 0;">Loading...</p>
+            </div>
+            <button onclick="loadOpenGeodeTags()">↻ Refresh</button>
+        </div>
+
+        <div id="tagListMessage" class="tag-message"></div>
+        <div id="tagsList" class="tags-list">
+            <div class="tag-empty">Loading tags...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    window.onViewLoad = function() {
+        const isAdmin = localStorage.getItem('geodeUserAdmin') === 'true';
+        const token = localStorage.getItem('geodeAccessToken');
+
+        if (!isAdmin || !token) {
+            document.getElementById('tagListMessage').innerText = 'Administrator access is required to manage tags.';
+            document.getElementById('tagListMessage').style.color = '#ef4444';
+            document.getElementById('tagsList').innerHTML = '';
+            document.querySelector('.tag-create-card').style.display = 'none';
+            return;
+        }
+
+        loadOpenGeodeTags();
+    };
+
+    function getOpenGeodeToken() {
+        return localStorage.getItem('geodeAccessToken');
+    }
+
+    function setTagMessage(elementId, message, color) {
+        const element = document.getElementById(elementId);
+        element.innerText = message || '';
+        element.style.color = color || 'var(--text-muted)';
+    }
+
+    async function openGeodeRequest(path, options = {}) {
+        const token = getOpenGeodeToken();
+        if (!token) {
+            throw new Error('You must be logged in as an administrator.');
+        }
+
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            ...(options.headers || {})
+        };
+
+        const response = await fetch(`${baseUrl}${path}`, {
+            ...options,
+            headers
+        });
+
+        if (!response.ok) {
+            let error = `Server returned HTTP ${response.status}`;
+            try {
+                const data = await response.json();
+                error = data.error || data.detail || error;
+            } catch (_) {}
+            throw new Error(error);
+        }
+
+        if (response.status === 204) {
+            return null;
+        }
+
+        return response.json();
+    }
+
+    async function loadOpenGeodeTags() {
+        const list = document.getElementById('tagsList');
+        list.innerHTML = '<div class="tag-empty">Loading tags...</div>';
+        setTagMessage('tagListMessage', '');
+
+        try {
+            const data = await openGeodeRequest('/OpenGeode/tags');
+            const tags = data?.payload || [];
+
+            document.getElementById('tagCount').innerText = `${tags.length} tag${tags.length === 1 ? '' : 's'}`;
+
+            if (!tags.length) {
+                list.innerHTML = '<div class="tag-empty">No tags have been created yet.</div>';
+                return;
+            }
+
+            list.innerHTML = tags.map(tag => `
+                <div class="tag-row" data-tag-id="${escapeHtml(String(tag.id))}">
+                    <input
+                        type="text"
+                        class="tag-name"
+                        value="${escapeHtml(tag.name || '')}"
+                        maxlength="128"
+                        aria-label="Internal tag name"
+                    >
+                    <input
+                        type="text"
+                        class="tag-display-name"
+                        value="${escapeHtml(tag.display_name || '')}"
+                        maxlength="128"
+                        aria-label="Tag display name"
+                    >
+                    <label class="tag-readonly">
+                        <input
+                            type="checkbox"
+                            class="tag-readonly-checkbox"
+                            ${tag.is_readonly ? 'checked' : ''}
+                        >
+                        Read-only
+                    </label>
+                    <div class="tag-actions">
+                        <button class="tag-save-button" onclick="saveOpenGeodeTag(${JSON.stringify(tag.name)})">Save</button>
+                        <button class="tag-delete-button" onclick="deleteOpenGeodeTag(${JSON.stringify(tag.name)})">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Failed to load OpenGeode tags:', error);
+            list.innerHTML = '<div class="tag-empty">Failed to load tags.</div>';
+            setTagMessage('tagListMessage', `❌ ${error.message}`, '#ef4444');
+        }
+    }
+
+    async function createOpenGeodeTag() {
+        const nameEl = document.getElementById('newTagName');
+        const displayEl = document.getElementById('newTagDisplayName');
+        const readonlyEl = document.getElementById('newTagReadonly');
+        const button = document.getElementById('createTagButton');
+
+        const name = nameEl.value.trim();
+        const displayName = displayEl.value.trim();
+
+        if (!name || !displayName) {
+            setTagMessage('tagCreateMessage', 'Both the internal name and display name are required.', '#ef4444');
+            return;
+        }
+
+        button.disabled = true;
+        setTagMessage('tagCreateMessage', 'Creating tag...');
+
+        try {
+            await openGeodeRequest('/OpenGeode/tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name,
+                    display_name: displayName,
+                    readonly: readonlyEl.checked
+                })
+            });
+
+            nameEl.value = '';
+            displayEl.value = '';
+            readonlyEl.checked = false;
+            setTagMessage('tagCreateMessage', '✅ Tag created.', '#10b981');
+            await loadOpenGeodeTags();
+        } catch (error) {
+            setTagMessage('tagCreateMessage', `❌ ${error.message}`, '#ef4444');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function saveOpenGeodeTag(originalName) {
+        const row = [...document.querySelectorAll('.tag-row')]
+            .find(element => element.querySelector('.tag-save-button')?.getAttribute('onclick')?.includes(JSON.stringify(originalName)));
+
+        if (!row) {
+            setTagMessage('tagListMessage', 'Could not find the selected tag.', '#ef4444');
+            return;
+        }
+
+        const name = row.querySelector('.tag-name').value.trim();
+        const displayName = row.querySelector('.tag-display-name').value.trim();
+        const readonly = row.querySelector('.tag-readonly-checkbox').checked;
+        const button = row.querySelector('.tag-save-button');
+
+        if (!name || !displayName) {
+            setTagMessage('tagListMessage', 'Both the internal name and display name are required.', '#ef4444');
+            return;
+        }
+
+        button.disabled = true;
+
+        try {
+            await openGeodeRequest(`/OpenGeode/tags/${encodeURIComponent(originalName)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name,
+                    display_name: displayName,
+                    readonly
+                })
+            });
+
+            setTagMessage('tagListMessage', `✅ Updated ${name}.`, '#10b981');
+            await loadOpenGeodeTags();
+        } catch (error) {
+            setTagMessage('tagListMessage', `❌ ${error.message}`, '#ef4444');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function deleteOpenGeodeTag(name) {
+        if (!confirm(`Delete the tag "${name}"?\n\nAny existing mod assignments using this tag will also be removed.`)) {
+            return;
+        }
+
+        try {
+            await openGeodeRequest(`/OpenGeode/tags?name=${encodeURIComponent(name)}`, {
+                method: 'DELETE'
+            });
+
+            setTagMessage('tagListMessage', `✅ Deleted ${name}.`, '#10b981');
+            await loadOpenGeodeTags();
+        } catch (error) {
+            setTagMessage('tagListMessage', `❌ ${error.message}`, '#ef4444');
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+</script>
