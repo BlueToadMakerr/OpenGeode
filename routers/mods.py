@@ -78,7 +78,7 @@ def list_mods(
     return {"error": "", "payload": paged}
 
 
-@router.post("", status_code=201, summary="Create a new mod")
+@router.post("", status_code=201, summary="Create a new mod or submit a new version for an existing mod")
 async def create_mod(body: CreateQueryParams, developer: Developer = Depends(security.get_current_developer)):
     manifest = await utils.fetch_and_parse_geode_file(body.download_link)
     manifest["_download_link"] = body.download_link
@@ -88,29 +88,52 @@ async def create_mod(body: CreateQueryParams, developer: Developer = Depends(sec
     if existing_mod is not None:
         if not (developer.admin or is_mod_developer(existing_mod, developer.id)):
             raise HTTPException(status_code=403, detail="Forbidden")
-        if storage.find_all("mod_versions", lambda v, mid=mod_id: v["mod_id"] == mid):
-            raise HTTPException(status_code=409, detail=f"Mod {mod_id} already exists! Submit a new version.")
-        mod_row = existing_mod
-    else:
-        now = storage.now_iso()
-        mod_row = {
-            "id": mod_id,
-            "repository": manifest.get("repository"),
-            "links": {
-                "homepage": (manifest.get("links") or {}).get("homepage"),
-                "community": (manifest.get("links") or {}).get("community"),
-                "source": manifest.get("repository") or (manifest.get("links") or {}).get("source"),
-            },
-            "tags": mq.filter_submittable_tags(manifest.get("tags", [])),
-            "featured": False,
-            "download_count": 0,
-            "developers": [{"developer_id": developer.id, "is_owner": True}],
-            "about": manifest.get("_about"),
-            "changelog": manifest.get("_changelog"),
-            "created_at": now,
-            "updated_at": now,
-        }
-        storage.insert("mods", mod_row)
+
+        _validate_new_version(mod_id, manifest["version"])
+        make_accepted = _new_version_status(mod_id, developer)
+        version_row = _build_version_row(
+            manifest,
+            mod_id,
+            initial_status=ModVersionStatusEnum.accepted.value if make_accepted else ModVersionStatusEnum.pending.value,
+        )
+
+        versions = mq.versions_for_mod(mod_id)
+        versions.sort(key=lambda v: mq.compare_versions_key(v["version"]), reverse=True)
+        if versions and versions[0]["status"] == ModVersionStatusEnum.pending.value:
+            version_row["id"] = versions[0]["id"]
+            version_row["created_at"] = versions[0].get("created_at") or version_row["created_at"]
+            storage.update_where("mod_versions", {"id": versions[0]["id"]}, version_row)
+            version_row = storage.find_one("mod_versions", id=versions[0]["id"])
+        else:
+            storage.insert("mod_versions", version_row)
+
+        if not make_accepted:
+            _ensure_submission(version_row["id"])
+        else:
+            _refresh_mod_metadata(mod_id, manifest)
+            _save_logo(mod_id, manifest)
+
+        return {"error": "", "payload": mod_public(existing_mod, [version_row], requester=developer)}
+
+    now = storage.now_iso()
+    mod_row = {
+        "id": mod_id,
+        "repository": manifest.get("repository"),
+        "links": {
+            "homepage": (manifest.get("links") or {}).get("homepage"),
+            "community": (manifest.get("links") or {}).get("community"),
+            "source": manifest.get("repository") or (manifest.get("links") or {}).get("source"),
+        },
+        "tags": mq.filter_submittable_tags(manifest.get("tags", [])),
+        "featured": False,
+        "download_count": 0,
+        "developers": [{"developer_id": developer.id, "is_owner": True}],
+        "about": manifest.get("_about"),
+        "changelog": manifest.get("_changelog"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    storage.insert("mods", mod_row)
 
     version_row = _build_version_row(manifest, mod_id, initial_status=ModVersionStatusEnum.pending.value)
     storage.insert("mod_versions", version_row)
@@ -252,6 +275,13 @@ def _validate_new_version(mod_id: str, new_version: str) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not valid:
             raise HTTPException(status_code=409, detail=f"Version {new_version} is not newer than this mod's latest submitted version ({highest}) -- submit a higher version number")
+
+
+def _new_version_status(id: str, developer: Developer) -> bool:
+    if not developer.verified:
+        return False
+    versions = mq.versions_for_mod(id)
+    return any(v["status"] in (ModVersionStatusEnum.accepted.value, ModVersionStatusEnum.unlisted.value) for v in versions)
 
 
 def _refresh_mod_metadata(mod_id: str, manifest: dict) -> dict:
