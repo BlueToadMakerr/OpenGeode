@@ -23,11 +23,15 @@ class Settings:
         "GITHUB_CALLBACK_URL", "http://localhost:3000/v1/login/github/callback"
     )
 
-    # Auth / JWT  secrets
+    # Auth / JWT secrets
     JWT_SECRET: str = os.getenv("JWT_SECRET", "")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+
+    # Geometry Dash login-code authentication
+    ALLOW_GD_LOGIN: bool = _bool("ALLOW_GD_LOGIN", False)
+    GD_LOGIN_CODE_EXPIRE_SECONDS: int = int(os.getenv("GD_LOGIN_CODE_EXPIRE_SECONDS", "60"))
 
     # Github Device flow
     DEVICE_FLOW_EXPIRE_SECONDS: int = int(os.getenv("DEVICE_FLOW_EXPIRE_SECONDS", "900"))
