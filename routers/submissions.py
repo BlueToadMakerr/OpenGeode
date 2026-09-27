@@ -19,7 +19,7 @@ from models import (
     UpdateSubmissionPayload,
 )
 from pagination import page_params, paginate
-from serializers import developer_public, is_mod_developer
+from serializers import developer_public, developer_has_accepted_mod, is_mod_developer
 
 router = APIRouter(prefix="/v1/mods/{id}/versions/{version}/submission", tags=["mod_version_submissions"])
 
@@ -294,11 +294,19 @@ async def upload_attachments(
     submission = _get_submission_or_404(version_row)
     comment = _get_comment_or_404(submission["mod_version_id"], comment_id)
 
-    if not (developer.verified or developer.admin or is_mod_developer(mod_row, developer.id)):
-        raise HTTPException(
-            status_code=403,
-            detail="Only verified developers, this mod's developers, or index admins can post attachments",
-        )
+    permission = settings.ATTACHMENT_PERMISSIONS
+    allowed = (
+        permission == 1
+        or (permission == 2 and (developer.admin or developer.verified))
+        or (permission == 3 and (developer.admin or developer_has_accepted_mod(developer.id)))
+        or (permission == 4 and developer.admin)
+    )
+
+    if permission < 1 or permission > 5:
+        raise HTTPException(status_code=500, detail="Invalid attachment permission setting")
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="You do not have permission to upload attachments")
 
     existing = storage.find_all("submission_attachments", lambda a: a["comment_id"] == comment_id)
     if not image:
