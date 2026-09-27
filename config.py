@@ -48,6 +48,12 @@ class Settings:
         "ATTACHMENTS_DIR", os.path.join("database", "mods_storage", "attachments")
     )
 
+    # Attachment upload permissions:
+    # 1 = anyone, 2 = admins + verified developers,
+    # 3 = admins + developers with an approved mod,
+    # 4 = admins only, 5 = disabled.
+    ATTACHMENT_PERMISSIONS: int = int(os.getenv("ATTACHMENT_PERMISSIONS", "1"))
+
     # Uploads Limits
     MAX_ATTACHMENT_SIZE_BYTES: int = int(os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(8 * 1024 * 1024)))
     MAX_ATTACHMENTS_PER_COMMENT: int = int(os.getenv("MAX_ATTACHMENTS_PER_COMMENT", "5"))
