@@ -41,7 +41,6 @@ TABLES: dict[str, list[str]] = {
     "tokens": ["id", "developer_id", "refresh_token_hash"],
     "login_attempts": ["uuid"],
     "oauth_states": ["state"],
-    "gd_login_codes": ["id", "code_hash", "developer_id"],
 }
 
 _DEFAULT_TAGS = [
@@ -105,6 +104,8 @@ def init_db() -> None:
         conn.execute("PRAGMA foreign_keys=OFF")
         _conn = conn
         _create_schema(conn)
+        # Remove the old Geometry Dash login-code table from existing installs.
+        conn.execute("DROP TABLE IF EXISTS gd_login_codes")
         if is_new_db:
             _migrate_from_legacy_json(conn)
         if not all_rows("tags"):
@@ -177,61 +178,3 @@ def all_rows(table: str) -> list[dict]:
     with _lock:
         cur = _conn.execute(f'SELECT data FROM "{table}"')
         return [json.loads(r[0]) for r in cur.fetchall()]
-
-
-def _quote_column(table: str, field: str) -> str:
-    if field in TABLES.get(table, []):
-        return f'"{field}"'
-    return f"json_extract(data, '$.{field}')"
-
-
-def find_one(table: str, **filters) -> Optional[dict]:
-    with _lock:
-        if not filters:
-            cur = _conn.execute(f'SELECT data FROM "{table}" LIMIT 1')
-        else:
-            where = " AND ".join(f"{_quote_column(table, k)} = ?" for k in filters)
-            cur = _conn.execute(f'SELECT data FROM "{table}" WHERE {where} LIMIT 1', list(filters.values()))
-        row = cur.fetchone()
-        return json.loads(row[0]) if row else None
-
-
-def find_all(table: str, predicate: Optional[Callable[[dict], bool]] = None) -> list[dict]:
-    rows = all_rows(table)
-    if predicate is None:
-        return rows
-    return [r for r in rows if predicate(r)]
-
-
-def insert(table: str, row: dict) -> dict:
-    with _lock:
-        _conn.execute(f'INSERT INTO "{table}" (data) VALUES (?)', (json.dumps(row, default=str),))
-        _conn.commit()
-        return dict(row)
-
-
-def update_where(table: str, match: dict, patch: dict) -> Optional[dict]:
-    with _lock:
-        where = " AND ".join(f"{_quote_column(table, k)} = ?" for k in match)
-        cur = _conn.execute(f'SELECT _rowid, data FROM "{table}" WHERE {where} LIMIT 1', list(match.values()))
-        row = cur.fetchone()
-        if row is None:
-            return None
-        rowid, data = row
-        updated = json.loads(data)
-        updated.update(patch)
-        _conn.execute(f'UPDATE "{table}" SET data = ? WHERE _rowid = ?', (json.dumps(updated, default=str), rowid))
-        _conn.commit()
-        return updated
-
-
-def delete_where(table: str, predicate: Callable[[dict], bool]) -> int:
-    with _lock:
-        cur = _conn.execute(f'SELECT _rowid, data FROM "{table}"')
-        to_delete = [rowid for rowid, data in cur.fetchall() if predicate(json.loads(data))]
-        if not to_delete:
-            return 0
-        placeholders = ",".join("?" * len(to_delete))
-        _conn.execute(f'DELETE FROM "{table}" WHERE _rowid IN ({placeholders})', to_delete)
-        _conn.commit()
-        return len(to_delete)
