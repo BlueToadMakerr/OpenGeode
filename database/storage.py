@@ -41,7 +41,6 @@ TABLES: dict[str, list[str]] = {
     "tokens": ["id", "developer_id", "refresh_token_hash"],
     "login_attempts": ["uuid"],
     "oauth_states": ["state"],
-    "gd_login_codes": ["id", "code_hash", "developer_id"],
 }
 
 _DEFAULT_TAGS = [
@@ -105,6 +104,8 @@ def init_db() -> None:
         conn.execute("PRAGMA foreign_keys=OFF")
         _conn = conn
         _create_schema(conn)
+        # Remove the old Geometry Dash login-code table from existing installs.
+        conn.execute("DROP TABLE IF EXISTS gd_login_codes")
         if is_new_db:
             _migrate_from_legacy_json(conn)
         if not all_rows("tags"):
