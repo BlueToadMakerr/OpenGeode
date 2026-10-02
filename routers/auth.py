@@ -122,7 +122,7 @@ async def poll_github_device_flow(body: PollParams):
     result = await github_oauth.poll_device_flow(attempt["device_code"])
 
     if result.get("pending"):
-        raise HTTPException(status_code=400, detail="Authorization pending")
+        raise HTTPException(status_code=401, detail="Authorization pending")
     if result.get("slow_down"):
         if result.get("interval"):
             storage.update_where("login_attempts", {"uuid": body.uuid}, {"interval": result["interval"]})
