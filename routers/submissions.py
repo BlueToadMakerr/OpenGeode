@@ -382,7 +382,7 @@ async def upload_attachments(
         storage.insert("submission_attachments", row)
         created.append(row)
 
-    _add_comment_audit(comment_id, AuditAction.updated, f"Attached {len(created)} file{"s" if len(created) != 1 else ""}", developer.id)
+    _add_comment_audit(comment_id, AuditAction.updated, f"Attached {len(created)} file{'s' if len(created) != 1 else ''}", developer.id)
 
     return {"error": "", "payload": [_attachment_public(r) for r in created]}
 
