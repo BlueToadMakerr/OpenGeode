@@ -19,6 +19,7 @@ class Settings:
 
     # Base URL
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:3000")
+    FRONT_URL: str = os.getenv("FRONT_URL", "https://geode-sdk.org")
 
     # GitHub OAuth
     GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
