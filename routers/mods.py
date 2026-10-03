@@ -203,7 +203,7 @@ def get_mod_logo(id: str):
 
 
 @router.post("/{id}/developers", status_code=204, summary="Add a developer to a mod", tags=["developers"])
-def add_mod_developer(id: str, body: AddDevPayload, developer: Developer = Depends(security.get_current_developer)):
+def add_mod_developer(id: str, body: AddDevPayload, developer: Developer = Depends(security.require_not_banned)):
     mod_row = storage.find_one("mods", id=id)
     if mod_row is None:
         raise HTTPException(status_code=404, detail="Mod not found")
