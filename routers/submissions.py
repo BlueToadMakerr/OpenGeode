@@ -17,6 +17,8 @@ from models import (
     ModVersionSubmissionLock,
     UpdateCommentPayload,
     UpdateSubmissionPayload,
+    AuditAction,
+    AuditActionRow,
 )
 from pagination import page_params, paginate
 from serializers import developer_public, developer_has_accepted_mod, is_mod_developer
@@ -70,6 +72,33 @@ def _attachment_public(row: dict) -> dict:
     return {"id": row["id"], "comment_id": row["comment_id"], "url": row["url"], "created_at": row["created_at"]}
 
 
+
+
+def _audit_row(action: AuditAction, details: Optional[str], performed_by: Optional[int]) -> dict:
+    return {
+        "action": action.value,
+        "details": details,
+        "performed_by": performed_by,
+        "performed_at": storage.now_iso(),
+    }
+
+
+def _add_submission_audit(submission_id: int, action: AuditAction, details: Optional[str] = None, performed_by: Optional[int] = None) -> None:
+    storage.insert("submission_audit", {
+        "id": storage.next_id("submission_audit"),
+        "submission_id": submission_id,
+        **_audit_row(action, details, performed_by),
+    })
+
+
+def _add_comment_audit(comment_id: int, action: AuditAction, details: Optional[str] = None, performed_by: Optional[int] = None) -> None:
+    storage.insert("comment_audit", {
+        "id": storage.next_id("comment_audit"),
+        "comment_id": comment_id,
+        **_audit_row(action, details, performed_by),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Submission
 # ---------------------------------------------------------------------------
@@ -100,6 +129,7 @@ def get_submission(
                 "updated_at": now,
             },
         )
+        _add_submission_audit(submission["mod_version_id"], AuditAction.created)
 
     return {"error": "", "payload": _submission_public(submission)}
 
@@ -117,6 +147,7 @@ def update_submission(
         raise HTTPException(status_code=404, detail="Submission not found")
 
     locked_by = admin.id if body.lock != ModVersionSubmissionLock.none else None
+    _add_submission_audit(version_row["id"], AuditAction.updated, f"Submission {body.lock.value}", admin.id)
     updated = storage.update_where(
         "submissions",
         {"mod_version_id": version_row["id"]},
@@ -188,6 +219,7 @@ def create_comment(
         "updated_at": None,
     }
     storage.insert("submission_comments", row)
+    _add_comment_audit(row["id"], AuditAction.created, performed_by=developer.id)
     storage.update_where("submissions", {"mod_version_id": submission["mod_version_id"]}, {"updated_at": now})
     return {"error": "", "payload": _comment_public(row)}
 
@@ -218,6 +250,7 @@ def update_comment(
     if not body.comment.strip():
         raise HTTPException(status_code=400, detail="comment cannot be empty")
 
+    _add_comment_audit(comment_id, AuditAction.updated, f"Updated comment. Previously: {comment["comment"]}", developer.id)
     updated = storage.update_where(
         "submission_comments",
         {"id": comment_id},
@@ -240,6 +273,7 @@ def delete_comment(
     if comment["author_id"] != developer.id and not developer.admin:
         raise HTTPException(status_code=403, detail="You may only delete your own comments")
 
+    _add_comment_audit(comment_id, AuditAction.deleted, performed_by=developer.id)
     attachments = storage.find_all("submission_attachments", lambda a: a["comment_id"] == comment_id)
     for att in attachments:
         _delete_attachment_file(att)
@@ -373,3 +407,31 @@ def delete_attachment(
     _delete_attachment_file(row)
     storage.delete_where("submission_attachments", lambda a: a["id"] == attachment_id)
     return None
+
+
+@router.get("/audit", summary="Get submission audit (admin only)")
+def get_submission_audit(
+    id: str,
+    version: str,
+    _admin: Developer = Depends(security.require_admin),
+):
+    _mod, version_row = _get_mod_and_version(id, version)
+    submission = _get_submission_or_404(version_row)
+    rows = storage.find_all("submission_audit", lambda a: a["submission_id"] == submission["mod_version_id"])
+    rows.sort(key=lambda a: a["performed_at"])
+    return {"error": "", "payload": [AuditActionRow(**{k: row.get(k) for k in ("action", "details", "performed_by", "performed_at")}).model_dump() for row in rows]}
+
+
+@router.get("/comments/{comment_id}/audit", summary="Get comment audit (admin only)")
+def get_comment_audit(
+    id: str,
+    version: str,
+    comment_id: int,
+    _admin: Developer = Depends(security.require_admin),
+):
+    _mod, version_row = _get_mod_and_version(id, version)
+    submission = _get_submission_or_404(version_row)
+    comment = _get_comment_or_404(submission["mod_version_id"], comment_id)
+    rows = storage.find_all("comment_audit", lambda a: a["comment_id"] == comment_id)
+    rows.sort(key=lambda a: a["performed_at"])
+    return {"error": "", "payload": [AuditActionRow(**{k: row.get(k) for k in ("action", "details", "performed_by", "performed_at")}).model_dump() for row in rows]}
