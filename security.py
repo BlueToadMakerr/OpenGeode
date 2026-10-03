@@ -152,7 +152,7 @@ def get_active_ban(developer_id: int) -> Optional[dict]:
         revoked_at = ban.get("revoked_at")
         if revoked_at is None or storage.parse_iso(revoked_at) > now:
             active.append(ban)
-    active.sort(key=lambda b: (b.get("revoked_at") is not None, b.get("revoked_at") or "", b.get("id", 0)), reverse=False)
+    active.sort(key=lambda b: (b.get("revoked_at") is not None, -storage.parse_iso(b["revoked_at"]).timestamp() if b.get("revoked_at") else 0, -b.get("id", 0)))
     return active[0] if active else None
 
 
