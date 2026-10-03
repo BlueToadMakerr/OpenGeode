@@ -144,6 +144,25 @@ def get_current_developer_optional(
         return None
 
 
+def get_active_ban(developer_id: int) -> Optional[dict]:
+    now = datetime.now(timezone.utc)
+    rows = storage.find_all("bans", lambda b: b.get("developer_id") == developer_id)
+    active = []
+    for ban in rows:
+        revoked_at = ban.get("revoked_at")
+        if revoked_at is None or storage.parse_iso(revoked_at) > now:
+            active.append(ban)
+    active.sort(key=lambda b: (b.get("revoked_at") is not None, b.get("revoked_at") or "", b.get("id", 0)), reverse=False)
+    return active[0] if active else None
+
+
+def require_not_banned(developer: Developer = Depends(get_current_developer)) -> Developer:
+    ban = get_active_ban(developer.id)
+    if ban is not None:
+        raise HTTPException(status_code=403, detail=ban.get("reason") or "You are banned from accessing this resource")
+    return developer
+
+
 def require_admin(developer: Developer = Depends(get_current_developer)) -> Developer:
     if not developer.admin:
         raise HTTPException(status_code=403, detail="Admin only")
