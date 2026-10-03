@@ -165,4 +165,4 @@ For API compatibility work, compare OpenGeode against the upstream repository an
 
 ## AI Usage
 
-This converted server fully made with AI using (The Geode SDK Server)[https://github.com/geode-sdk/server] as a reference. All OpenGeode endpoints were not made with AI. See more info (here)[https://bluetoadmaker.infinityfreeapp.com/ai.html]
+This converted server fully made with AI using [The Geode SDK Server](https://github.com/geode-sdk/server) as a reference. All OpenGeode endpoints were not made with AI. See more info [here](https://bluetoadmaker.infinityfreeapp.com/ai.html)
