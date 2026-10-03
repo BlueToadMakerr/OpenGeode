@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -53,6 +54,15 @@ def status_badge(id: str, stat: StatusBadgeStat = Query(...)):
         StatusBadgeStat.geode_version: "payload.versions[0].geode",
         StatusBadgeStat.downloads: "payload.download_count",
     }
+    svg_path = {
+        StatusBadgeStat.version: "static/shields/mod_version.svg",
+        StatusBadgeStat.gd_version: "static/shields/mod_gd_version.svg",
+        StatusBadgeStat.geode_version: "static/shields/mod_geode_version.svg",
+        StatusBadgeStat.downloads: "static/shields/mod_downloads.svg",
+    }[stat]
+    svg = Path(svg_path).read_bytes()
+    svg_data_url = "data:image/svg+xml;utf8," + quote(svg.decode("utf-8"), safe="")
+
     shields_url = (
         "https://img.shields.io/badge/dynamic/json"
         f"?url={quote(api_url, safe='')}"
@@ -61,5 +71,6 @@ def status_badge(id: str, stat: StatusBadgeStat = Query(...)):
         "&labelColor=%230c0811&color=%235f3d84"
         f"&link={quote(mod_link, safe='')}"
         "&style=plastic"
+        f"&logo={quote(svg_data_url, safe='')}"
     )
     return RedirectResponse(shields_url, status_code=302)
