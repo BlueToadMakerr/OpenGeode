@@ -128,6 +128,29 @@ class ModDeveloper(BaseModel):
     is_owner: bool
 
 
+class DeveloperBan(BaseModel):
+    id: int
+    developer_id: int
+    reason: Optional[str] = None
+    admin_id: Optional[int] = None
+    created_at: str
+    revoked_at: Optional[str] = None
+
+
+class AuditAction(str, Enum):
+    created = "created"
+    updated = "updated"
+    deleted = "deleted"
+    restored = "restored"
+
+
+class AuditActionRow(BaseModel):
+    action: AuditAction
+    details: Optional[str] = None
+    performed_by: Optional[int] = None
+    performed_at: str
+
+
 class DeveloperUpdatePayload(BaseModel):
     admin: Optional[bool] = None
     verified: Optional[bool] = None
