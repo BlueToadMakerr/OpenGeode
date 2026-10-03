@@ -163,6 +163,6 @@ The FastAPI interactive documentation is available at `/docs`.
 
 For API compatibility work, compare OpenGeode against the upstream repository and update the compatibility version whenever the upstream release being mirrored changes.
 
-## License
+## AI Usage
 
-See the repository's license and upstream Geode server licensing for the applicable terms.
+This converted server fully made with AI using (The Geode SDK Server)[https://github.com/geode-sdk/server] as a reference. All OpenGeode endpoints were not made with AI. See more info (here)[https://bluetoadmaker.infinityfreeapp.com/ai.html]
