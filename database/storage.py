@@ -41,6 +41,9 @@ TABLES: dict[str, list[str]] = {
     "tokens": ["id", "developer_id", "refresh_token_hash"],
     "login_attempts": ["uuid"],
     "oauth_states": ["state"],
+    "bans": ["id", "developer_id"],
+    "submission_audit": ["id", "submission_id"],
+    "comment_audit": ["id", "comment_id"],
 }
 
 _DEFAULT_TAGS = [
