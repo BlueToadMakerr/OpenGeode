@@ -308,7 +308,9 @@ def _ensure_submission(mod_version_id: int) -> dict:
     if existing:
         return existing
     now = storage.now_iso()
-    return storage.insert("submissions", {"mod_version_id": mod_version_id, "lock": "none", "locked_by": None, "created_at": now, "updated_at": now})
+    row = storage.insert("submissions", {"mod_version_id": mod_version_id, "lock": "none", "locked_by": None, "created_at": now, "updated_at": now})
+    storage.insert("submission_audit", {"id": storage.next_id("submission_audit"), "submission_id": mod_version_id, "action": "created", "details": None, "performed_by": None, "performed_at": now})
+    return row
 
 
 def _save_logo(mod_id: str, manifest: dict) -> None:
