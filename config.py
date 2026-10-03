@@ -13,6 +13,10 @@ def _bool(name: str, default: bool) -> bool:
 
 
 class Settings:
+    # Server
+    HOST: str = os.getenv("HOST", "127.0.0.1")
+    PORT: int = int(os.getenv("PORT", "3000"))
+
     # Base URL
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:3000")
 
