@@ -79,7 +79,7 @@ def list_mods(
 
 
 @router.post("", status_code=201, summary="Create a new mod or submit a new version for an existing mod")
-async def create_mod(body: CreateQueryParams, developer: Developer = Depends(security.get_current_developer)):
+async def create_mod(body: CreateQueryParams, developer: Developer = Depends(security.require_not_banned)):
     manifest = await utils.fetch_and_parse_geode_file(body.download_link)
     manifest["_download_link"] = body.download_link
     mod_id = manifest["id"]
@@ -210,6 +210,8 @@ def add_mod_developer(id: str, body: AddDevPayload, developer: Developer = Depen
     if not is_mod_owner(mod_row, developer.id):
         raise HTTPException(status_code=403, detail="Forbidden")
     target = storage.find_one("developers", username=body.username)
+    if target is not None and security.get_active_ban(target["id"]) is not None:
+        raise HTTPException(status_code=403, detail="The developer being added is banned")
     if target is None:
         raise HTTPException(status_code=400, detail=f"No developer found with username {body.username}")
     if any(d["developer_id"] == target["id"] for d in mod_row["developers"]):
