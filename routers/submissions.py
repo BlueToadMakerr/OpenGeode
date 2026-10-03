@@ -382,6 +382,8 @@ async def upload_attachments(
         storage.insert("submission_attachments", row)
         created.append(row)
 
+    _add_comment_audit(comment_id, AuditAction.updated, f"Attached {len(created)} file{"s" if len(created) != 1 else ""}", developer.id)
+
     return {"error": "", "payload": [_attachment_public(r) for r in created]}
 
 
@@ -406,6 +408,7 @@ def delete_attachment(
 
     _delete_attachment_file(row)
     storage.delete_where("submission_attachments", lambda a: a["id"] == attachment_id)
+    _add_comment_audit(comment_id, AuditAction.updated, "Removed an attachment", developer.id)
     return None
 
 
