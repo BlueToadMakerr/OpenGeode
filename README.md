@@ -78,6 +78,7 @@ All settings are read from `.env` (or the process environment).
 | `PORT` | `3000` | HTTP port used by the API. |
 | `ENV` | `development` | General environment label. |
 | `BASE_URL` | `http://localhost:3000` | Public base URL used when generating API/download/attachment URLs. |
+| `FRONT_URL` | `https://geode-sdk.org` | Frontend base URL used by mod status badge links. |
 | `GITHUB_CLIENT_ID` | empty | GitHub OAuth application client ID. |
 | `GITHUB_CLIENT_SECRET` | empty | GitHub OAuth application client secret. |
 | `GITHUB_CALLBACK_URL` | `http://localhost:3000/v1/login/github/callback` | OAuth callback URL registered with GitHub. |
