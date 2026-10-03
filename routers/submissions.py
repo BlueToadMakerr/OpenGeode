@@ -164,6 +164,8 @@ def _get_submission_or_404(version_row: dict) -> dict:
 
 
 def _ensure_unlocked_for(submission: dict, developer: Developer) -> None:
+    if security.get_active_ban(developer.id) is not None:
+        raise HTTPException(status_code=403, detail="You are banned from accessing this resource")
     if submission["lock"] == ModVersionSubmissionLock.none.value:
         return
     if submission["lock"] == ModVersionSubmissionLock.locked.value and not developer.admin:
