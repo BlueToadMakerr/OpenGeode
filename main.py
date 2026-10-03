@@ -11,7 +11,7 @@ from routers import all_routers
 
 app = FastAPI(
     title="OpenGeode Index API",
-    version="0.53.2",
+    version="0.59.1",
     description="Reimplimentation of the Geode SDK index in Python!",
 )
 
@@ -83,7 +83,7 @@ def root():
  |   |          |_|                                                           |   |
  |___|                                                                        |___|
 (_____)----------------------------------------------------------------------(_____)
-Based on Geode Index v0.53.2
+Based on Geode Index v0.59.1
 API at /docs
 OpenGeode endpoints at /opengeode
 Recreated in python!
@@ -94,4 +94,4 @@ Made by BlueToadMaker :3
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=3000, reload=True)
+    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)
