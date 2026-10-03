@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 import security
 from database import storage
@@ -179,7 +180,7 @@ def update_developer(
     return {"error": "", "payload": _developer_public(updated)}
 
 
-class _DeveloperBanPayload(__import__("pydantic").BaseModel):
+class _DeveloperBanPayload(BaseModel):
     reason: Optional[str] = None
     revoked_at: Optional[datetime] = None
 
