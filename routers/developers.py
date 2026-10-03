@@ -229,8 +229,6 @@ def get_developer_bans(
     id: int,
     _admin: Developer = Depends(security.require_admin),
 ):
-    if storage.find_one("developers", id=id) is None:
-        raise HTTPException(status_code=404, detail="Developer not found")
     rows = storage.find_all("bans", lambda b: b.get("developer_id") == id)
     rows.sort(key=lambda b: ((b.get("revoked_at") is not None), b.get("revoked_at") or "", b.get("id", 0)), reverse=True)
     return {"error": "", "payload": [DeveloperBan(**row).model_dump() for row in rows]}
