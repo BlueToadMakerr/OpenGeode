@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -8,6 +9,7 @@ import security
 from database import storage
 from models import (
     Developer,
+    DeveloperBan,
     DeveloperUpdatePayload,
     ModDeveloper,
     ModVersionStatusEnum,
@@ -175,3 +177,60 @@ def update_developer(
 
     updated = storage.update_where("developers", {"id": id}, patch)
     return {"error": "", "payload": _developer_public(updated)}
+
+
+class _DeveloperBanPayload(__import__("pydantic").BaseModel):
+    reason: Optional[str] = None
+    revoked_at: Optional[datetime] = None
+
+
+@router.post("/v1/developers/{id}/bans", summary="Ban a developer from mod submissions (admin only)")
+def ban_developer(
+    id: int,
+    body: _DeveloperBanPayload,
+    admin: Developer = Depends(security.require_admin),
+):
+    if storage.find_one("developers", id=id) is None:
+        raise HTTPException(status_code=404, detail="Developer not found")
+
+    existing = security.get_active_ban(id)
+    revoked_at = body.revoked_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if body.revoked_at else None
+    if existing is not None:
+        row = storage.update_where(
+            "bans",
+            {"id": existing["id"]},
+            {"reason": body.reason, "revoked_at": revoked_at, "admin_id": admin.id},
+        )
+    else:
+        row = storage.insert("bans", {
+            "id": storage.next_id("bans"),
+            "developer_id": id,
+            "reason": body.reason,
+            "admin_id": admin.id,
+            "created_at": storage.now_iso(),
+            "revoked_at": revoked_at,
+        })
+    return {"error": "", "payload": DeveloperBan(**row).model_dump()}
+
+
+@router.delete("/v1/developers/{id}/bans", status_code=204, summary="Revoke a developer's current ban (admin only)")
+def unban_developer(
+    id: int,
+    _admin: Developer = Depends(security.require_admin),
+):
+    ban = security.get_active_ban(id)
+    if ban is not None:
+        storage.update_where("bans", {"id": ban["id"]}, {"revoked_at": storage.now_iso()})
+    return None
+
+
+@router.get("/v1/developers/{id}/bans", summary="Fetch a list of a developer's bans (admin only)")
+def get_developer_bans(
+    id: int,
+    _admin: Developer = Depends(security.require_admin),
+):
+    if storage.find_one("developers", id=id) is None:
+        raise HTTPException(status_code=404, detail="Developer not found")
+    rows = storage.find_all("bans", lambda b: b.get("developer_id") == id)
+    rows.sort(key=lambda b: ((b.get("revoked_at") is not None), b.get("revoked_at") or "", b.get("id", 0)), reverse=True)
+    return {"error": "", "payload": [DeveloperBan(**row).model_dump() for row in rows]}
