@@ -11,7 +11,7 @@ from routers import all_routers
 
 app = FastAPI(
     title="OpenGeode Index API",
-    version="0.59.1",
+    version="0.61.1",
     description="Reimplimentation of the Geode SDK index in Python!",
 )
 
@@ -83,7 +83,7 @@ def root():
  |   |          |_|                                                           |   |
  |___|                                                                        |___|
 (_____)----------------------------------------------------------------------(_____)
-Based on Geode Index v0.59.1
+Based on Geode Index v0.61.1
 API at /docs
 OpenGeode endpoints at /opengeode
 Recreated in python!
