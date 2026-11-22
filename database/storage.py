@@ -69,6 +69,7 @@ _DEFAULT_TAGS = [
     {"id": 22, "name": "modtober25winner", "display_name": "Modtober 2025 Winner", "is_readonly": True},
     {"id": 18, "name": "modtober24", "display_name": "Modtober 2024", "is_readonly": True},
     {"id": 21, "name": "modtober25", "display_name": "Modtober 2025", "is_readonly": True},
+    {"id": 23, "name": "gdps", "display_name": "GDPS", "is_readonly": False},
 ]
 
 
@@ -113,6 +114,7 @@ def init_db() -> None:
             _migrate_from_legacy_json(conn)
         if not all_rows("tags"):
             _seed_default_tags(conn)
+        _ensure_upstream_tags(conn)
         conn.commit()
 
 
@@ -131,6 +133,22 @@ def _seed_default_tags(conn: sqlite3.Connection) -> None:
     for tag in _DEFAULT_TAGS:
         conn.execute("INSERT INTO tags (data) VALUES (?)", (json.dumps(tag),))
     _set_next_id(conn, "tags", max(t["id"] for t in _DEFAULT_TAGS) + 1)
+
+
+def _ensure_upstream_tags(conn: sqlite3.Connection) -> None:
+    existing = {
+        json.loads(row[0]).get("name")
+        for row in conn.execute("SELECT data FROM tags").fetchall()
+    }
+    missing = [tag for tag in _DEFAULT_TAGS if tag["name"] not in existing]
+    for tag in missing:
+        conn.execute("INSERT INTO tags (data) VALUES (?)", (json.dumps(tag),))
+    if missing:
+        current_ids = [
+            json.loads(row[0]).get("id", 0)
+            for row in conn.execute("SELECT data FROM tags").fetchall()
+        ]
+        _set_next_id(conn, "tags", max(current_ids, default=0) + 1)
 
 
 def _migrate_from_legacy_json(conn: sqlite3.Connection) -> None:
