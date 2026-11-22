@@ -179,7 +179,7 @@ async def update_version_status(
         if approved_count == 0:
             storage.update_where("mods", {"id": id}, {"created_at": now})
         if manifest is not None:
-            _refresh_mod_metadata(id, manifest)
+            _refresh_mod_metadata(id, manifest, replace_tags=True, replace_links=True)
             _save_logo(id, manifest)
 
         submission = storage.find_one("submissions", mod_version_id=row["id"])
