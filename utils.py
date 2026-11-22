@@ -104,7 +104,7 @@ def _is_public_ip(value: str) -> bool:
     return address.is_global and not address.is_multicast
 
 
-def _resolve_public_address(host: str, port: int) -> str:
+def _resolve_public_addresses(host: str, port: int) -> list[str]:
     normalized_host = host.rstrip(".").lower()
     denied_suffixes = (".host", ".lan", ".local", ".internal")
     if (
@@ -127,7 +127,7 @@ def _resolve_public_address(host: str, port: int) -> str:
 
     if not addresses or any(not _is_public_ip(address) for address in addresses):
         raise HTTPException(status_code=400, detail="Download URL resolves to a disallowed IP address")
-    return addresses[0]
+    return addresses
 
 
 def _download_http_hop(url: str, max_size: int):
@@ -149,9 +149,8 @@ def _download_http_hop(url: str, max_size: int):
     ):
         raise HTTPException(status_code=400, detail="Invalid download URL")
 
-    pinned_ip = _resolve_public_address(host, port)
+    pinned_ips = _resolve_public_addresses(host, port)
     connection_type = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
-    connection = connection_type(host, port, pinned_ip)
     host_header = f"[{host}]" if ":" in host else host
     if port != (443 if scheme == "https" else 80):
         host_header = f"{host_header}:{port}"
@@ -159,44 +158,51 @@ def _download_http_hop(url: str, max_size: int):
     if parsed.query:
         target += f"?{parsed.query}"
 
-    try:
-        connection.request(
-            "GET",
-            target,
-            headers={
-                "Host": host_header,
-                "User-Agent": "OpenGeode",
-                "Accept-Encoding": "identity",
-                "Connection": "close",
-            },
-        )
-        response = connection.getresponse()
-        headers = {key.lower(): value for key, value in response.getheaders()}
+    last_error = None
+    for pinned_ip in pinned_ips:
+        connection = connection_type(host, port, pinned_ip)
+        try:
+            connection.request(
+                "GET",
+                target,
+                headers={
+                    "Host": host_header,
+                    "User-Agent": "OpenGeode",
+                    "Accept-Encoding": "identity",
+                    "Connection": "close",
+                },
+            )
+            response = connection.getresponse()
+            headers = {key.lower(): value for key, value in response.getheaders()}
 
-        if 300 <= response.status < 400:
-            return response.status, headers, b""
-        if response.status != 200:
-            return response.status, headers, b""
+            if 300 <= response.status < 400 or response.status != 200:
+                return response.status, headers, b""
 
-        content_length = headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > max_size:
+            content_length = headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > max_size:
+                        raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
+                except ValueError:
+                    pass
+
+            chunks = bytearray()
+            while True:
+                chunk = response.read(min(64 * 1024, max_size + 1 - len(chunks)))
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+                if len(chunks) > max_size:
                     raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
-            except ValueError:
-                pass
+            return response.status, headers, bytes(chunks)
+        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+            last_error = exc
+        finally:
+            connection.close()
 
-        chunks = bytearray()
-        while True:
-            chunk = response.read(min(64 * 1024, max_size + 1 - len(chunks)))
-            if not chunk:
-                break
-            chunks.extend(chunk)
-            if len(chunks) > max_size:
-                raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
-        return response.status, headers, bytes(chunks)
-    finally:
-        connection.close()
+    if last_error is not None:
+        raise last_error
+    raise HTTPException(status_code=400, detail="Could not connect to download URL")
 
 
 async def download_bytes(url: str, max_size: int) -> bytes:
