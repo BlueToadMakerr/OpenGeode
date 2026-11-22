@@ -4,14 +4,19 @@ and downloading + parsing .geode files
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import http.client
 import io
+import ipaddress
 import json
 import re
+import socket
+import ssl
 import zipfile
 from typing import Optional
+from urllib.parse import urljoin, urlsplit
 
-import httpx
 from fastapi import HTTPException
 from semantic_version import Version
 
@@ -61,20 +66,155 @@ def version_matches(version: str, target: str, op: str) -> bool:
 REQUIRED_MOD_JSON_FIELDS = ["id", "name", "version", "geode"]
 
 
-async def download_bytes(url: str, max_size: int) -> bytes:
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, port: int, pinned_ip: str):
+        super().__init__(host, port, timeout=30)
+        self.pinned_ip = pinned_ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self.pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host: str, port: int, pinned_ip: str):
+        super().__init__(host, port, timeout=30, context=ssl.create_default_context())
+        self.pinned_ip = pinned_ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self.pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+def _is_public_ip(value: str) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                if resp.status_code != 200:
-                    raise HTTPException(status_code=400, detail=f"Failed to download file from download_link (status {resp.status_code})")
-                chunks = bytearray()
-                async for chunk in resp.aiter_bytes():
-                    chunks.extend(chunk)
-                    if len(chunks) > max_size:
-                        raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
-                return bytes(chunks)
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=400, detail=f"Could not reach download_link: {exc}") from exc
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_global
+
+
+def _resolve_public_address(host: str, port: int) -> str:
+    normalized_host = host.rstrip(".").lower()
+    denied_suffixes = (".host", ".lan", ".local", ".internal")
+    if (
+        normalized_host == "localhost"
+        or normalized_host in {"host", "lan", "local", "internal"}
+        or normalized_host.endswith(denied_suffixes)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid download URL")
+
+    try:
+        literal = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        try:
+            records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="Could not resolve download URL host") from exc
+        addresses = list(dict.fromkeys(record[4][0] for record in records))
+    else:
+        addresses = [str(literal)]
+
+    if not addresses or any(not _is_public_ip(address) for address in addresses):
+        raise HTTPException(status_code=400, detail="Download URL resolves to a disallowed IP address")
+    return addresses[0]
+
+
+def _download_http_hop(url: str, max_size: int):
+    try:
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid download URL") from exc
+
+    if (
+        scheme not in {"http", "https"}
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or "%" in host
+    ):
+        raise HTTPException(status_code=400, detail="Invalid download URL")
+
+    pinned_ip = _resolve_public_address(host, port)
+    connection_type = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
+    connection = connection_type(host, port, pinned_ip)
+    host_header = f"[{host}]" if ":" in host else host
+    if port != (443 if scheme == "https" else 80):
+        host_header = f"{host_header}:{port}"
+    target = parsed.path or "/"
+    if parsed.query:
+        target += f"?{parsed.query}"
+
+    try:
+        connection.request(
+            "GET",
+            target,
+            headers={
+                "Host": host_header,
+                "User-Agent": "OpenGeode",
+                "Accept-Encoding": "identity",
+                "Connection": "close",
+            },
+        )
+        response = connection.getresponse()
+        headers = {key.lower(): value for key, value in response.getheaders()}
+
+        if 300 <= response.status < 400:
+            return response.status, headers, b""
+        if response.status != 200:
+            return response.status, headers, b""
+
+        content_length = headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > max_size:
+                    raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
+            except ValueError:
+                pass
+
+        chunks = bytearray()
+        while True:
+            chunk = response.read(min(64 * 1024, max_size + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            if len(chunks) > max_size:
+                raise HTTPException(status_code=400, detail="Downloaded file exceeds size limit")
+        return response.status, headers, bytes(chunks)
+    finally:
+        connection.close()
+
+
+async def download_bytes(url: str, max_size: int) -> bytes:
+    current_url = url
+    for _ in range(10):
+        try:
+            status, headers, data = await asyncio.to_thread(
+                _download_http_hop, current_url, max_size
+            )
+        except HTTPException:
+            raise
+        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+            raise HTTPException(status_code=400, detail=f"Could not reach download_link: {exc}") from exc
+
+        if 300 <= status < 400:
+            location = headers.get("location")
+            if not location:
+                raise HTTPException(status_code=400, detail="Invalid redirect from download_link")
+            current_url = urljoin(current_url, location)
+            continue
+        if status != 200:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to download file from download_link (status {status})",
+            )
+        return data
+
+    raise HTTPException(status_code=400, detail="Too many redirects when downloading .geode file")
 
 
 def parse_geode_package(file_bytes: bytes) -> dict:
