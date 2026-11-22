@@ -18,6 +18,7 @@ from typing import Optional
 from urllib.parse import urljoin, urlsplit
 
 from fastapi import HTTPException
+from PIL import Image, UnidentifiedImageError
 from semantic_version import Version
 
 from config import settings
@@ -92,7 +93,7 @@ def _is_public_ip(value: str) -> bool:
         return False
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
-    return address.is_global
+    return address.is_global and not address.is_multicast
 
 
 def _resolve_public_address(host: str, port: int) -> str:
@@ -126,7 +127,7 @@ def _download_http_hop(url: str, max_size: int):
         parsed = urlsplit(url)
         scheme = parsed.scheme.lower()
         host = parsed.hostname
-        port = parsed.port or (443 if scheme == "https" else 80)
+        port = parsed.port if parsed.port is not None else (443 if scheme == "https" else 80)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid download URL") from exc
 
@@ -136,6 +137,7 @@ def _download_http_hop(url: str, max_size: int):
         or parsed.username is not None
         or parsed.password is not None
         or "%" in host
+        or port < 1
     ):
         raise HTTPException(status_code=400, detail="Invalid download URL")
 
@@ -193,12 +195,13 @@ async def download_bytes(url: str, max_size: int) -> bytes:
     current_url = url
     for _ in range(10):
         try:
-            status, headers, data = await asyncio.to_thread(
-                _download_http_hop, current_url, max_size
+            status, headers, data = await asyncio.wait_for(
+                asyncio.to_thread(_download_http_hop, current_url, max_size),
+                timeout=60,
             )
         except HTTPException:
             raise
-        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+        except (OSError, http.client.HTTPException, ssl.SSLError, TimeoutError) as exc:
             raise HTTPException(status_code=400, detail=f"Could not reach download_link: {exc}") from exc
 
         if 300 <= status < 400:
@@ -218,48 +221,89 @@ async def download_bytes(url: str, max_size: int) -> bytes:
 
 
 def parse_geode_package(file_bytes: bytes) -> dict:
+    max_mod_json_size = 128 * 1024
+    max_markdown_size = 1024 * 1024
+    max_logo_size = 5 * 1024 * 1024
+    max_uncompressed_size = 512 * 1024 * 1024
+
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-            names = zf.namelist()
-            manifest_name = next((n for n in names if n == "mod.json" or n.endswith("/mod.json")), None)
-            if manifest_name is None:
-                raise HTTPException(status_code=400, detail="Package does not contain a mod.json")
-            with zf.open(manifest_name) as f:
+            infos = zf.infolist()
+            if sum(info.file_size for info in infos) > max_uncompressed_size:
+                raise HTTPException(status_code=400, detail="Package exceeds the uncompressed size limit")
+
+            manifest_info = next((info for info in infos if info.filename == "mod.json"), None)
+            if manifest_info is None:
+                raise HTTPException(status_code=400, detail="Package does not contain a root mod.json")
+            if manifest_info.file_size > max_mod_json_size:
+                raise HTTPException(status_code=400, detail="mod.json exceeds the 128 KB size limit")
+            with zf.open(manifest_info) as f:
                 manifest = json.load(f)
 
-            root_files = {n.lower(): n for n in names if "/" not in n and not n.endswith("/")}
+            root_files = {
+                info.filename.lower(): info
+                for info in infos
+                if "/" not in info.filename and not info.filename.endswith("/")
+            }
 
             def read_root_file(*candidate_names: str) -> Optional[str]:
                 for candidate in candidate_names:
-                    real_name = root_files.get(candidate.lower())
-                    if real_name:
-                        with zf.open(real_name) as rf:
+                    info = root_files.get(candidate.lower())
+                    if info:
+                        if info.file_size > max_markdown_size:
+                            raise HTTPException(status_code=400, detail=f"{info.filename} exceeds the 1 MB size limit")
+                        with zf.open(info) as rf:
                             return rf.read().decode("utf-8", errors="replace")
                 return None
 
             def read_root_file_bytes(*candidate_names: str) -> Optional[bytes]:
                 for candidate in candidate_names:
-                    real_name = root_files.get(candidate.lower())
-                    if real_name:
-                        with zf.open(real_name) as rf:
+                    info = root_files.get(candidate.lower())
+                    if info:
+                        if info.file_size > max_logo_size:
+                            raise HTTPException(status_code=400, detail="logo.png exceeds the 5 MB size limit")
+                        with zf.open(info) as rf:
                             return rf.read()
                 return None
 
             manifest["_about"] = read_root_file("about.md", "README.md")
             manifest["_changelog"] = read_root_file("changelog.md")
-            manifest["_logo_bytes"] = read_root_file_bytes("logo.png")
+            logo_bytes = read_root_file_bytes("logo.png")
+            if logo_bytes:
+                try:
+                    with Image.open(io.BytesIO(logo_bytes)) as logo:
+                        if logo.format != "PNG":
+                            raise HTTPException(status_code=400, detail="logo.png must be a PNG image")
+                        width, height = logo.size
+                        if width != height:
+                            raise HTTPException(status_code=400, detail="Mod logo must have a 1:1 aspect ratio")
+                        if width > 1024 or height > 1024:
+                            raise HTTPException(status_code=400, detail="Mod logo dimensions may not exceed 1024x1024")
+                        logo.verify()
+                except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+                    raise HTTPException(status_code=400, detail="logo.png is not a valid PNG image") from exc
+            manifest["_logo_bytes"] = logo_bytes
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="download_link did not point to a valid .geode package")
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="mod.json in the package is not valid JSON")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="mod.json in the package is not valid UTF-8")
 
     missing = [field for field in REQUIRED_MOD_JSON_FIELDS if field not in manifest]
     if missing:
         raise HTTPException(status_code=400, detail=f"mod.json missing required field(s): {', '.join(missing)}")
     if not MOD_ID_RE.match(manifest["id"]):
         raise HTTPException(status_code=400, detail="mod.json 'id' must look like '<developer>.<mod-name>', e.g. 'geode.node-ids'")
+    if manifest["id"] == "geode.loader":
+        raise HTTPException(status_code=400, detail="The geode.loader mod ID is reserved")
+    if not manifest.get("developer") and not manifest.get("developers"):
+        raise HTTPException(status_code=400, detail="No developer specified on mod.json")
+    if not all(ord(char) < 128 and (char.isprintable() or char == " ") for char in str(manifest["name"])):
+        raise HTTPException(status_code=400, detail="Mod name contains non-printable characters")
     try:
         _parse_version(str(manifest["version"]))
+        _parse_version(str(manifest["geode"]))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
