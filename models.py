@@ -17,6 +17,15 @@ class ModVersionStatusEnum(str, Enum):
     rejected = "rejected"
     unlisted = "unlisted"
 
+    def can_transition_to(self, to: "ModVersionStatusEnum") -> bool:
+        allowed = {
+            ModVersionStatusEnum.pending: {ModVersionStatusEnum.accepted, ModVersionStatusEnum.rejected},
+            ModVersionStatusEnum.accepted: {ModVersionStatusEnum.unlisted},
+            ModVersionStatusEnum.rejected: {ModVersionStatusEnum.accepted},
+            ModVersionStatusEnum.unlisted: {ModVersionStatusEnum.accepted},
+        }
+        return to in allowed[self]
+
 
 class ModVersionCompare(str, Enum):
     eq = "="
@@ -68,6 +77,7 @@ class VerPlatform(str, Enum):
 KNOWN_GD_VERSIONS = [
     "*", "2.113", "2.200", "2.204", "2.205", "2.206", "2.207", "2.2071",
     "2.2072", "2.2073", "2.2074", "2.208", "2.2081", "2.2082",
+    "2.209", "2.2091",
 ]
 
 
