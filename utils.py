@@ -93,6 +93,14 @@ def _is_public_ip(value: str) -> bool:
         return False
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
+    denied_networks = (
+        ipaddress.ip_network("0.0.0.0/8"),
+        ipaddress.ip_network("192.0.0.0/24"),
+        ipaddress.ip_network("198.18.0.0/15"),
+        ipaddress.ip_network("240.0.0.0/4"),
+    )
+    if isinstance(address, ipaddress.IPv4Address) and any(address in network for network in denied_networks):
+        return False
     return address.is_global and not address.is_multicast
 
 
