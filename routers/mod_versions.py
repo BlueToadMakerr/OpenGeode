@@ -171,10 +171,12 @@ async def update_version_status(
     )
 
     manifest = None
-    if should_accept and not newer_accepted and row.get("direct_download_link"):
+    if should_accept and row.get("direct_download_link"):
         manifest = await utils.fetch_and_parse_geode_file(row["direct_download_link"])
         if manifest.get("id") != id:
             raise HTTPException(status_code=400, detail="Stored mod package id does not match the mod")
+        if manifest.get("_hash") != row.get("hash"):
+            raise HTTPException(status_code=400, detail="Stored mod package hash does not match the submitted version")
 
     now = storage.now_iso()
     storage.update_where(
@@ -186,7 +188,7 @@ async def update_version_status(
     if should_accept:
         if approved_count == 0:
             storage.update_where("mods", {"id": id}, {"created_at": now})
-        if manifest is not None:
+        if manifest is not None and not newer_accepted:
             _refresh_mod_metadata(id, manifest, replace_tags=True, replace_links=True)
             _save_logo(id, manifest)
 
