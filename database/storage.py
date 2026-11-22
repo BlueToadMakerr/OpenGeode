@@ -142,6 +142,7 @@ def _ensure_upstream_tags(conn: sqlite3.Connection) -> None:
     ]
     existing_names = {row.get("name") for row in rows}
     next_id = max((row.get("id", 0) for row in rows), default=0) + 1
+    added = False
 
     for tag in _DEFAULT_TAGS:
         if tag["name"] in existing_names:
@@ -150,8 +151,9 @@ def _ensure_upstream_tags(conn: sqlite3.Connection) -> None:
         new_tag["id"] = next_id
         next_id += 1
         conn.execute("INSERT INTO tags (data) VALUES (?)", (json.dumps(new_tag),))
+        added = True
 
-    if next_id > 1:
+    if added:
         _set_next_id(conn, "tags", next_id)
 
 
