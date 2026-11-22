@@ -62,7 +62,7 @@ def list_versions(
 async def create_version(
     id: str,
     body: CreateQueryParams,
-    developer: Developer = Depends(security.get_current_developer),
+    developer: Developer = Depends(security.require_not_banned),
 ):
     mod_row = _get_mod_or_404(id)
     if not (developer.admin or is_mod_developer(mod_row, developer.id)):
@@ -115,22 +115,12 @@ def get_version(
     current_dev: Optional[Developer] = Depends(security.get_current_developer_optional),
 ):
     mod_row = _get_mod_or_404(id)
+    mq.validate_gd(gd)
     platform_list = mq.parse_platforms(platforms)
     if version == "latest":
-        row = mq.select_best_version(id, [ModVersionStatusEnum.accepted.value], gd, platform_list, None)
-        if major is not None and row is not None:
-            try:
-                row_major = int(row["version"].split(".", 1)[0])
-            except (ValueError, IndexError):
-                row = None
-            if row is not None and row_major != major:
-                candidates = [
-                    v for v in mq.versions_for_mod(id, [ModVersionStatusEnum.accepted.value])
-                    if mq.version_matches_gd(v, gd) and mq.version_matches_platforms(v, platform_list)
-                    and v["version"].split(".", 1)[0].isdigit() and int(v["version"].split(".", 1)[0]) == major
-                ]
-                candidates.sort(key=lambda v: mq.compare_versions_key(v["version"]), reverse=True)
-                row = candidates[0] if candidates else None
+        row = mq.select_best_version(
+            id, [ModVersionStatusEnum.accepted.value], gd, platform_list, None, major
+        )
     else:
         row = storage.find_one("mod_versions", mod_id=id, version=version)
         if row is not None and row["status"] == ModVersionStatusEnum.rejected.value and not (current_dev and current_dev.admin):
@@ -142,17 +132,64 @@ def get_version(
 
 
 @router.put("/{version}", status_code=204, summary="Update a mod version status (admin only)")
-def update_version_status(
+async def update_version_status(
     id: str,
     version: str,
     body: UpdatePayload,
     _admin: Developer = Depends(security.require_admin),
 ):
-    _get_mod_or_404(id)
+    mod_row = _get_mod_or_404(id)
     row = storage.find_one("mod_versions", mod_id=id, version=version)
     if row is None:
         raise HTTPException(status_code=404, detail="Mod or version not found")
-    storage.update_where("mod_versions", {"id": row["id"]}, {"status": body.status.value, "info": body.info, "updated_at": storage.now_iso()})
+
+    old_status = ModVersionStatusEnum(row["status"])
+    if old_status == body.status:
+        return None
+    if not old_status.can_transition_to(body.status):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot change version status from {old_status.value} to {body.status.value}",
+        )
+
+    approved_count = len(mq.versions_for_mod(id, [ModVersionStatusEnum.accepted.value]))
+    should_accept = (
+        body.status == ModVersionStatusEnum.accepted
+        and old_status in (ModVersionStatusEnum.pending, ModVersionStatusEnum.rejected)
+    )
+    newer_accepted = any(
+        v["id"] > row["id"] and v["status"] == ModVersionStatusEnum.accepted.value
+        for v in mq.versions_for_mod(id)
+    )
+
+    manifest = None
+    if should_accept and not newer_accepted and row.get("direct_download_link"):
+        manifest = await utils.fetch_and_parse_geode_file(row["direct_download_link"])
+        if manifest.get("id") != id:
+            raise HTTPException(status_code=400, detail="Stored mod package id does not match the mod")
+
+    now = storage.now_iso()
+    storage.update_where(
+        "mod_versions",
+        {"id": row["id"]},
+        {"status": body.status.value, "info": body.info, "updated_at": now},
+    )
+
+    if should_accept:
+        if approved_count == 0:
+            storage.update_where("mods", {"id": id}, {"created_at": now})
+        if manifest is not None:
+            _refresh_mod_metadata(id, manifest)
+            _save_logo(id, manifest)
+
+        submission = storage.find_one("submissions", mod_version_id=row["id"])
+        if submission is not None and submission.get("lock") != "locked":
+            storage.update_where(
+                "submissions",
+                {"mod_version_id": row["id"]},
+                {"lock": "locked", "locked_by": None, "updated_at": now},
+            )
+
     return None
 
 
@@ -165,9 +202,12 @@ def download_version(
     major: Optional[int] = Query(default=None),
 ):
     _get_mod_or_404(id)
+    mq.validate_gd(gd)
     platform_list = mq.parse_platforms(platforms)
     if version == "latest":
-        row = mq.select_best_version(id, [ModVersionStatusEnum.accepted.value], gd, platform_list, None)
+        row = mq.select_best_version(
+            id, [ModVersionStatusEnum.accepted.value], gd, platform_list, None, major
+        )
     else:
         row = storage.find_one("mod_versions", mod_id=id, version=version)
         if row is not None and row["status"] != ModVersionStatusEnum.accepted.value:
