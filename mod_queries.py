@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from database import storage
 from models import KNOWN_GD_VERSIONS, ModVersionStatusEnum, VerPlatform
-from utils import compare_versions, version_matches
+from utils import _parse_version, compare_versions, version_matches
 
 _PLATFORM_FIELDS = {
     VerPlatform.win: ("win",),
@@ -111,13 +111,64 @@ def version_matches_platforms(v: dict, platforms: Optional[list[VerPlatform]]) -
     return any(gd.get(field) for platform in platforms for field in _PLATFORM_FIELDS.get(platform, ()))
 
 
-def version_matches_geode(v: dict, geode: Optional[str]) -> bool:
+def version_matches_geode(
+    v: dict,
+    geode: Optional[str],
+    for_update: bool = False,
+) -> bool:
     if not geode:
         return True
     try:
-        return compare_versions(v["geode"], geode) <= 0
-    except ValueError:
+        installed = _parse_version(geode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid geode version") from exc
+    try:
+        required = _parse_version(v["geode"])
+    except (KeyError, ValueError):
         return False
+
+    if required.major != installed.major or required.minor > installed.minor:
+        return False
+
+    installed_pre = ".".join(str(part) for part in installed.prerelease) if installed.prerelease else None
+    required_pre = ".".join(str(part) for part in required.prerelease) if required.prerelease else None
+    required_is_alpha = bool(required_pre and required_pre.lower().startswith("alpha"))
+
+    if for_update:
+        if installed_pre is None:
+            return required_pre is None or not required_is_alpha
+        if installed_pre.lower().startswith("alpha"):
+            return (
+                (required.minor == installed.minor and required.patch == installed.patch and required_pre == installed_pre)
+                or required_pre is None
+                or required.minor < installed.minor
+                or (
+                    not required_is_alpha
+                    and installed_pre.lower() >= (required_pre or "").lower()
+                )
+            )
+        return (
+            required_pre is None
+            or required.minor < installed.minor
+            or required.patch < installed.patch
+            or (
+                not required_is_alpha
+                and installed_pre.lower() >= (required_pre or "").lower()
+            )
+        )
+
+    if installed_pre and installed_pre.lower().startswith("alpha"):
+        return (
+            (required.minor == installed.minor and required.patch == installed.patch and required_pre == installed_pre)
+            or required_pre is None
+            or required.minor < installed.minor
+        )
+    if installed_pre is not None:
+        return required_pre is None or (
+            not required_is_alpha
+            and installed_pre.lower() >= (required_pre or "").lower()
+        )
+    return required_pre is None or not required_is_alpha
 
 
 def versions_for_mod(mod_id: str, statuses: Optional[list[str]] = None) -> list[dict]:
@@ -134,13 +185,14 @@ def select_best_version(
     platforms: Optional[list[VerPlatform]] = None,
     geode: Optional[str] = None,
     major: Optional[int] = None,
+    update_mode: bool = False,
 ) -> Optional[dict]:
     candidates = [
         v
         for v in versions_for_mod(mod_id, statuses)
         if version_matches_gd(v, gd)
         and version_matches_platforms(v, platforms)
-        and version_matches_geode(v, geode)
+        and version_matches_geode(v, geode, for_update=update_mode)
         and (
             major is None
             or (v.get("version", "").split(".", 1)[0].isdigit()
