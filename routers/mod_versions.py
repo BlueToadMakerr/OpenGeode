@@ -128,9 +128,11 @@ def get_version(
 
     if row is None:
         raise HTTPException(status_code=404, detail="Couldn't find valid mod version for given filters")
-    payload = mod_version_public(row, mod_row, context="list", requester=current_dev)
-    payload["dependencies"] = mq.resolve_dependencies_for_version(
+    payload = mod_version_public(
         row,
+        mod_row,
+        context="list",
+        requester=current_dev,
         gd=gd,
         geode_major=major if version == "latest" else None,
     )
