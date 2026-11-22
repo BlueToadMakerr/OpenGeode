@@ -286,13 +286,18 @@ def _new_version_status(id: str, developer: Developer) -> bool:
     return any(v["status"] in (ModVersionStatusEnum.accepted.value, ModVersionStatusEnum.unlisted.value) for v in versions)
 
 
-def _refresh_mod_metadata(mod_id: str, manifest: dict) -> dict:
+def _refresh_mod_metadata(
+    mod_id: str,
+    manifest: dict,
+    replace_tags: bool = False,
+    replace_links: bool = False,
+) -> dict:
     patch: dict = {"updated_at": storage.now_iso()}
     tags = mq.filter_submittable_tags(manifest.get("tags", []))
-    if tags:
+    if tags or replace_tags:
         patch["tags"] = tags
     links = manifest.get("links") or {}
-    if links or manifest.get("repository"):
+    if links or manifest.get("repository") or replace_links:
         patch["links"] = {"homepage": links.get("homepage"), "community": links.get("community"), "source": manifest.get("repository") or links.get("source")}
     if manifest.get("repository"):
         patch["repository"] = manifest["repository"]
