@@ -60,7 +60,7 @@ def status_badge(id: str, stat: StatusBadgeStat = Query(...)):
         StatusBadgeStat.geode_version: "static/shields/mod_geode_version.svg",
         StatusBadgeStat.downloads: "static/shields/mod_downloads.svg",
     }[stat]
-    svg = Path(svg_path).read_bytes()
+    svg = (Path(__file__).resolve().parent.parent / svg_path).read_bytes()
     svg_data_url = "data:image/svg+xml;utf8," + quote(svg.decode("utf-8"), safe="")
 
     shields_url = (
