@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from database import storage
-from models import ModVersionStatusEnum, VerPlatform
+from models import KNOWN_GD_VERSIONS, ModVersionStatusEnum, VerPlatform
 from utils import compare_versions, version_matches
 
 _PLATFORM_FIELDS = {
@@ -92,7 +92,13 @@ def parse_compare(raw: Optional[str]) -> Optional[tuple[str, str]]:
     return (op or "=", ver.strip())
 
 
+def validate_gd(gd: Optional[str]) -> None:
+    if gd and gd not in KNOWN_GD_VERSIONS:
+        raise HTTPException(status_code=400, detail="Invalid gd")
+
+
 def version_matches_gd(v: dict, gd: Optional[str]) -> bool:
+    validate_gd(gd)
     if not gd or gd == "*":
         return True
     return gd in [val for val in v.get("gd", {}).values() if val]
@@ -127,6 +133,7 @@ def select_best_version(
     gd: Optional[str] = None,
     platforms: Optional[list[VerPlatform]] = None,
     geode: Optional[str] = None,
+    major: Optional[int] = None,
 ) -> Optional[dict]:
     candidates = [
         v
@@ -134,6 +141,11 @@ def select_best_version(
         if version_matches_gd(v, gd)
         and version_matches_platforms(v, platforms)
         and version_matches_geode(v, geode)
+        and (
+            major is None
+            or (v.get("version", "").split(".", 1)[0].isdigit()
+                and int(v["version"].split(".", 1)[0]) == major)
+        )
     ]
     if not candidates:
         return None
