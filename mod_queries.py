@@ -213,6 +213,80 @@ def select_best_version(
     return candidates[0]
 
 
+def resolve_dependencies_for_version(
+    version_row: dict,
+    gd: Optional[str] = None,
+    geode_major: Optional[int] = None,
+) -> list[dict]:
+    validate_gd(gd)
+    resolved = []
+
+    for dependency in version_row.get("dependencies") or []:
+        mod_id = dependency.get("mod_id")
+        constraint = dependency.get("version", "*")
+        if not mod_id:
+            continue
+
+        compare = None
+        target_version = None
+        if constraint != "*":
+            try:
+                compare, target_version = parse_compare(constraint)
+                target_major = _parse_version(target_version).major
+            except (HTTPException, ValueError):
+                continue
+
+        candidates = versions_for_mod(mod_id, [ModVersionStatusEnum.accepted.value])
+        candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                gd is None
+                or gd == "*"
+                or gd in (candidate.get("gd") or {}).values()
+                or "*" in (candidate.get("gd") or {}).values()
+            )
+        ]
+        if geode_major is not None:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if _version_geode_major(candidate) == geode_major
+            ]
+        if target_version is not None:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if _version_major(candidate.get("version", "")) == target_major
+                and version_matches(candidate.get("version", ""), target_version, compare)
+            ]
+
+        candidates.sort(key=lambda candidate: candidate.get("id", 0), reverse=True)
+        if candidates:
+            resolved.append({
+                "mod_id": mod_id,
+                "version": candidates[0]["version"],
+                "importance": dependency.get("importance", "required"),
+                "required": bool(dependency.get("required", True)),
+            })
+
+    return resolved
+
+
+def _version_major(version: str) -> Optional[int]:
+    try:
+        return _parse_version(version).major
+    except ValueError:
+        return None
+
+
+def _version_geode_major(version_row: dict) -> Optional[int]:
+    try:
+        return _parse_version(version_row.get("geode", "")).major
+    except ValueError:
+        return None
+
+
 def compare_versions_key(version: str):
     from utils import _version_key
     return _version_key(version)
