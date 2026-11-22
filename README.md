@@ -2,7 +2,7 @@
 
 OpenGeode is a Python/FastAPI reimplementation of the [Geode SDK server](https://github.com/geode-sdk/server) API.
 
-**Upstream compatibility target:** Geode Index Server **v0.59.1**.
+**Upstream compatibility target:** Geode Index Server **v0.61.1**.
 
 The project keeps the upstream `/v1/...` API shape while using SQLite and local filesystem storage instead of the upstream server's PostgreSQL/S3 production stack.
 
@@ -140,7 +140,7 @@ The callback URL must exactly match the URL configured in the OAuth application.
 
 ## Compatibility notes
 
-OpenGeode tracks the public API of the upstream Geode Index server and is currently based on **v0.59.1**.
+OpenGeode tracks the public API of the upstream Geode Index server and is currently based on **v0.61.1**.
 
 The Python implementation intentionally differs in infrastructure:
 
@@ -148,6 +148,8 @@ The Python implementation intentionally differs in infrastructure:
 - **File storage:** local filesystem instead of the upstream S3-compatible storage layer.
 - **Runtime:** FastAPI/Uvicorn instead of Actix Web.
 - **Production reverse-proxy/CDN setup:** not required for local use.
+
+The v0.61.1 compatibility update includes the 2.209/2.2091 GD version values, the GDPS tag, upstream version-status transition rules, rejected-to-accepted moderation handling, and version-major filtering for latest-version lookups.
 
 API behavior is kept separate from those infrastructure choices. When the upstream API changes, update the compatibility target and port the corresponding behavior rather than replacing the Python implementation with the Rust server.
 
