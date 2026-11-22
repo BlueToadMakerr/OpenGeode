@@ -154,7 +154,14 @@ def get_mod_updates(ids: str = Query(...), gd: str = Query(...), platform: VerPl
         if mod_deprecations:
             deprecations_out.extend(mod_deprecations)
             continue
-        best = mq.select_best_version(mod_id, [ModVersionStatusEnum.accepted.value], gd, [platform], geode)
+        best = mq.select_best_version(
+            mod_id,
+            [ModVersionStatusEnum.accepted.value],
+            gd,
+            [platform],
+            geode,
+            update_mode=True,
+        )
         if best is None:
             continue
         updates.append({
