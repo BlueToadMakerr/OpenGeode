@@ -223,8 +223,9 @@ def resolve_dependencies_for_version(
     geode_filter = f"{geode_major}.0.0" if geode_major is not None else None
 
     for dependency in version_row.get("dependencies") or []:
-        mod_id = dependency.get("mod_id")
+        mod_id = dependency.get("mod_id") or dependency.get("id")
         constraint = dependency.get("version", "*")
+        importance = dependency.get("importance", "required")
         if not mod_id:
             continue
 
@@ -266,8 +267,8 @@ def resolve_dependencies_for_version(
             resolved.append({
                 "mod_id": mod_id,
                 "version": candidates[0]["version"],
-                "importance": dependency.get("importance", "required"),
-                "required": bool(dependency.get("required", True)),
+                "importance": importance,
+                "required": bool(dependency.get("required", importance == "required")),
             })
 
     return resolved
