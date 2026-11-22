@@ -111,6 +111,14 @@ def version_matches_platforms(v: dict, platforms: Optional[list[VerPlatform]]) -
     return any(gd.get(field) for platform in platforms for field in _PLATFORM_FIELDS.get(platform, ()))
 
 
+def validate_geode(geode: Optional[str]) -> None:
+    if geode:
+        try:
+            _parse_version(geode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid geode version") from exc
+
+
 def version_matches_geode(
     v: dict,
     geode: Optional[str],
@@ -118,10 +126,8 @@ def version_matches_geode(
 ) -> bool:
     if not geode:
         return True
-    try:
-        installed = _parse_version(geode)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid geode version") from exc
+    validate_geode(geode)
+    installed = _parse_version(geode)
     try:
         required = _parse_version(v["geode"])
     except (KeyError, ValueError):
@@ -142,6 +148,7 @@ def version_matches_geode(
                 (required.minor == installed.minor and required.patch == installed.patch and required_pre == installed_pre)
                 or required_pre is None
                 or required.minor < installed.minor
+                or required.patch < installed.patch
                 or (
                     not required_is_alpha
                     and installed_pre.lower() >= (required_pre or "").lower()
@@ -187,6 +194,7 @@ def select_best_version(
     major: Optional[int] = None,
     update_mode: bool = False,
 ) -> Optional[dict]:
+    validate_geode(geode)
     candidates = [
         v
         for v in versions_for_mod(mod_id, statuses)
