@@ -149,7 +149,7 @@ The Python implementation intentionally differs in infrastructure:
 - **Runtime:** FastAPI/Uvicorn instead of Actix Web.
 - **Production reverse-proxy/CDN setup:** not required for local use.
 
-The v0.61.1 compatibility update includes the 2.209/2.2091 GD version values, the GDPS tag, upstream version-status transition rules, rejected-to-accepted moderation handling, and version-major filtering for latest-version lookups.
+The v0.61.1 compatibility update includes the 2.209/2.2091 GD version values, the GDPS tag, upstream version-status transition rules, rejected-to-accepted moderation handling, version-major filtering for latest-version lookups, and upstream-style Geode compatibility filtering. Mod package downloads also use validated, DNS-pinned HTTP(S) requests with redirect revalidation, download limits, and archive/logo size checks.
 
 API behavior is kept separate from those infrastructure choices. When the upstream API changes, update the compatibility target and port the corresponding behavior rather than replacing the Python implementation with the Rust server.
 
