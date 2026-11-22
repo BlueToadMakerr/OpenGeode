@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import mod_queries as mq
 from database import storage
 
 
@@ -48,6 +49,8 @@ def mod_version_public(
     *,
     context: str = "detail",
     requester: Optional[object] = None,
+    gd: Optional[str] = None,
+    geode_major: Optional[int] = None,
 ) -> dict:
     mod_row = mod_row or storage.find_one("mods", id=v["mod_id"])
     is_privileged = bool(
@@ -77,7 +80,9 @@ def mod_version_public(
     }
 
     if context != "embedded":
-        out["dependencies"] = v.get("dependencies") or []
+        out["dependencies"] = mq.resolve_dependencies_for_version(
+            v, gd=gd, geode_major=geode_major
+        )
         out["incompatibilities"] = v.get("incompatibilities") or []
 
     if is_privileged:
