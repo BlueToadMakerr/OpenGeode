@@ -220,6 +220,7 @@ def resolve_dependencies_for_version(
 ) -> list[dict]:
     validate_gd(gd)
     resolved = []
+    geode_filter = f"{geode_major}.0.0" if geode_major is not None else None
 
     for dependency in version_row.get("dependencies") or []:
         mod_id = dependency.get("mod_id")
@@ -242,16 +243,15 @@ def resolve_dependencies_for_version(
             for candidate in candidates
             if (
                 gd is None
-                or gd == "*"
                 or gd in (candidate.get("gd") or {}).values()
                 or "*" in (candidate.get("gd") or {}).values()
             )
         ]
-        if geode_major is not None:
+        if geode_filter is not None:
             candidates = [
                 candidate
                 for candidate in candidates
-                if _version_geode_major(candidate) == geode_major
+                if version_matches_geode(candidate, geode_filter, for_update=True)
             ]
         if target_version is not None:
             candidates = [
@@ -276,13 +276,6 @@ def resolve_dependencies_for_version(
 def _version_major(version: str) -> Optional[int]:
     try:
         return _parse_version(version).major
-    except ValueError:
-        return None
-
-
-def _version_geode_major(version_row: dict) -> Optional[int]:
-    try:
-        return _parse_version(version_row.get("geode", "")).major
     except ValueError:
         return None
 
